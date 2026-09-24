@@ -1,0 +1,22 @@
+# Implant sends: POST /sync  Body is base64(<id>||<encrypted_data>)
+# "||" separates the two fields
+
+profile_id: 7
+profile_label: http-composite-delim
+enabled: true
+action:
+  type: sync
+mapping:
+  composite_in:
+    separator:
+      type: delimiter
+      value: "||"
+    target:
+      location: body
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+    transform:
+      - type: base64

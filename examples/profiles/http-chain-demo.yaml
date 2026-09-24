@@ -1,0 +1,29 @@
+# Implant sends the id as: base64url(prefix("agent:", <id>))
+# Example: canonical id "abc123" -> prefixed "agent:abc123" -> base64url "YWdlbnQ6YWJjMTIz"
+
+profile_id: 4
+profile_label: http-chain-demo
+enabled: true
+action:
+  type: sync
+mapping:
+  id:
+    target:
+      location: header
+      key: X-Session
+    transform:
+      - type: prefix
+        value: "agent:"
+      - type: base64url
+  encrypted_data_in:
+    target:
+      location: body
+      key: blob
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+      key: blob
+    transform:
+      - type: base64

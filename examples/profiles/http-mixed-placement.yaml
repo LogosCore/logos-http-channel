@@ -1,0 +1,31 @@
+profile_id: 104
+profile_label: http-mixed-placement
+enabled: true
+action:
+  type: sync
+mapping:
+  profile_id:
+    target:
+      location: header
+      key: X-Api-Key
+    transform:
+      - type: prefix
+        value: "key-"
+  id:
+    target:
+      location: query
+      key: trace
+    transform:
+      - type: base64url
+  encrypted_data_in:
+    target:
+      location: body
+      key: content
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+      key: content
+    transform:
+      - type: base64

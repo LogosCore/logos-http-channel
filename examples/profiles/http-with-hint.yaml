@@ -1,0 +1,31 @@
+# Implant sends: Header "X-Profile: p:5"  (hint for profile_id 5)
+
+profile_id: 5
+profile_label: http-with-hint
+enabled: true
+action:
+  type: sync
+mapping:
+  profile_id:
+    target:
+      location: header
+      key: X-Profile
+    transform:
+      - type: prefix
+        value: "p:"
+  id:
+    target:
+      location: header
+      key: X-Agent-ID
+  encrypted_data_in:
+    target:
+      location: body
+      key: data
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+      key: data
+    transform:
+      - type: base64

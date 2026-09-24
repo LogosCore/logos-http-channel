@@ -1,0 +1,24 @@
+profile_id: 102
+profile_label: http-cookie-id
+enabled: true
+action:
+  type: sync
+mapping:
+  id:
+    target:
+      location: cookie
+      key: session_token
+    transform:
+      - type: base64url
+  encrypted_data_in:
+    target:
+      location: body
+      key: form_data
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+      key: form_data
+    transform:
+      - type: base64

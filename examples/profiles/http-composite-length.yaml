@@ -1,0 +1,21 @@
+# Implant sends: POST /sync  Body is base64(16-byte-id + encrypted_data)
+
+profile_id: 6
+profile_label: http-composite-length
+enabled: true
+action:
+  type: sync
+mapping:
+  composite_in:
+    separator:
+      type: length_prefix
+      id_length: 16
+    target:
+      location: body
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+    transform:
+      - type: base64

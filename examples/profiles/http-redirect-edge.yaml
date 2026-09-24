@@ -1,0 +1,18 @@
+profile_id: 8
+profile_label: http-redirect-edge
+enabled: true
+action:
+  type: redirect
+  params:
+    status_code: 302
+    location: https://edge.example.net/tunnel
+    target_channel: edge-http
+mapping:
+  id:
+    target:
+      location: query
+      key: rid
+  encrypted_data_in:
+    target:
+      location: query
+      key: blob

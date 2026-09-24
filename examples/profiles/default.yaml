@@ -1,0 +1,19 @@
+profile_id: 1
+profile_label: default
+enabled: true
+action:
+  type: sync
+mapping:
+  composite_in:
+    target:
+      location: body
+    transform:
+      - type: base64
+    separator:
+      type: length_prefix
+      id_length: 36
+  encrypted_data_out:
+    target:
+      location: body
+    transform:
+      - type: base64

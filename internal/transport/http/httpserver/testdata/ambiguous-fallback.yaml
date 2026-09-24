@@ -1,0 +1,12 @@
+profile_id: 302
+profile_label: ambiguous-fallback
+enabled: true
+action:
+  type: sync
+mapping:
+  id:
+    target: { location: body, key: id }
+  encrypted_data_in:
+    target: { location: body, key: encrypted_data }
+  encrypted_data_out:
+    target: { location: body, key: encrypted_data }

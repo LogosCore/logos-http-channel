@@ -1,0 +1,14 @@
+profile_id: 300
+profile_label: ambiguous-a
+enabled: true
+action:
+  type: sync
+mapping:
+  profile_id:
+    target: { location: body, key: dup }
+  id:
+    target: { location: body, key: id }
+  encrypted_data_in:
+    target: { location: body, key: encrypted_data }
+  encrypted_data_out:
+    target: { location: body, key: encrypted_data }

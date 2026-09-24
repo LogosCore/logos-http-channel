@@ -1,0 +1,5 @@
+# Local runtime configuration (use .env.example as a template)
+.env
+
+# Compiled binary
+/http-channel

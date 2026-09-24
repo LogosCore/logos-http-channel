@@ -1,0 +1,25 @@
+# Implant sends: POST /sync  {"sid": "<id>", "data": "<base64(encrypted_data)>"}
+# Channel returns: {"data": "<base64(encrypted_data)>"}
+
+profile_id: 2
+profile_label: http-body-b64
+enabled: true
+action:
+  type: sync
+mapping:
+  id:
+    target:
+      location: body
+      key: sid
+  encrypted_data_in:
+    target:
+      location: body
+      key: data
+    transform:
+      - type: base64
+  encrypted_data_out:
+    target:
+      location: body
+      key: data
+    transform:
+      - type: base64

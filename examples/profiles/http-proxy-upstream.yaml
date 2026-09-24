@@ -1,0 +1,18 @@
+profile_id: 9
+profile_label: http-proxy-upstream
+enabled: true
+action:
+  type: proxy_pass
+  params:
+    upstream: https://upstream.example.net/logos
+mapping:
+  id:
+    target:
+      location: header
+      key: X-Agent-ID
+  encrypted_data_in:
+    target:
+      location: body
+  encrypted_data_out:
+    target:
+      location: body
