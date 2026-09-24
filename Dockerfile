@@ -13,9 +13,12 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 
 COPY --from=builder /out/http-channel /app/http-channel
-COPY configs /app/configs
+COPY profiles /app/profiles
 
-ENV CONFIG_FILE=/app/configs/channel.example.yaml
+# The binary is configured entirely from the environment (see
+# internal/config.LoadFromEnv); the only thing it reads off disk is the
+# transposition profiles directory.
+ENV PROFILES_DIR=/app/profiles
 EXPOSE 8080
 
 ENTRYPOINT ["/app/http-channel"]
