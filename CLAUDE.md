@@ -51,4 +51,4 @@ go build -o http-channel ./cmd/http-channel
 
 ## Testing
 
-Tests are integration-style with a built-in Logos core simulator (`test_c2_core_test.go`) that stubs `/api/channel/sync`. Tests load profile YAMLs from `examples/profiles/` — these files are part of the test contract. All tests live in `internal/transport/http/httpserver/`.
+Tests are integration-style with a built-in Logos core simulator (`test_logos_core_test.go`) that stubs `/api/channel/sync`. Tests load profile YAMLs from `examples/profiles/` — these files are part of the test contract. All tests live in `internal/transport/http/httpserver/`.
