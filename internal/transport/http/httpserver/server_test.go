@@ -382,10 +382,10 @@ func TestDocProfile_JsonApi(t *testing.T) {
 	}
 }
 
-func TestDocProfile_CdnBlend(t *testing.T) {
+func TestDocProfile_Cdn1(t *testing.T) {
 	logosCore := newTestLogosCore(t)
 	defer logosCore.Close()
-	profiles := loadExampleProfiles(t, "http-cdn-blend.yaml")
+	profiles := loadExampleProfiles(t, "http-cdn-1.yaml")
 
 	srv := New(":0", "http-main", logosCore.URL(), profiles)
 	ts := httptest.NewServer(srv.Handler)
@@ -462,10 +462,10 @@ func TestDocProfile_CookieId(t *testing.T) {
 	}
 }
 
-func TestDocProfile_GetBeacon(t *testing.T) {
+func TestDocProfile_GetSimple(t *testing.T) {
 	logosCore := newTestLogosCore(t)
 	defer logosCore.Close()
-	profiles := loadExampleProfiles(t, "http-get-beacon.yaml")
+	profiles := loadExampleProfiles(t, "http-get-simple.yaml")
 
 	srv := New(":0", "http-main", logosCore.URL(), profiles)
 	ts := httptest.NewServer(srv.Handler)
@@ -477,8 +477,8 @@ func TestDocProfile_GetBeacon(t *testing.T) {
 	// Go's net/http auto-URL-decodes query values, so we need to url_encode
 	// the value so that after Go decodes it, the transform's url_decode still
 	// sees a url-encoded string.
-	idEncoded := base64.RawURLEncoding.EncodeToString([]byte("beacon-agent"))
-	blobB64 := base64.RawURLEncoding.EncodeToString([]byte("beacon-data"))
+	idEncoded := base64.RawURLEncoding.EncodeToString([]byte("simple-agent"))
+	blobB64 := base64.RawURLEncoding.EncodeToString([]byte("simple-data"))
 	blobUrlEncoded := url.QueryEscape(blobB64)
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/sync?uid="+idEncoded+"&q="+url.QueryEscape(blobUrlEncoded), bytes.NewReader([]byte(`{}`)))
@@ -494,7 +494,7 @@ func TestDocProfile_GetBeacon(t *testing.T) {
 	}
 
 	in := logosCore.LastInbound()
-	if in.ID != "beacon-agent" || in.EncryptedData != "beacon-data" {
+	if in.ID != "simple-agent" || in.EncryptedData != "simple-data" {
 		t.Fatalf("unexpected inbound to logosCore: %+v", in)
 	}
 }
