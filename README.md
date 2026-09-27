@@ -60,7 +60,7 @@ go run ./cmd/http-channel --config .env
 
 ## Integration Tests
 
-This module includes integration tests with a built-in `test-c2-core` simulator for `/api/channel/sync`.
+This module includes integration tests with a built-in `test-logos-core` simulator for `/api/channel/sync`.
 
 Run:
 
