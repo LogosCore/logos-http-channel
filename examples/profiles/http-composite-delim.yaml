@@ -1,4 +1,4 @@
-# Implant sends: POST /sync  Body is base64(<id>||<encrypted_data>)
+# Minion sends: POST /sync  Body is base64(<id>||<encrypted_data>)
 # "||" separates the two fields
 
 profile_id: 7

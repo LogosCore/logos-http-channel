@@ -1,4 +1,4 @@
-# Implant sends: POST /sync  {"sid": "<id>", "data": "<base64(encrypted_data)>"}
+# Minion sends: POST /sync  {"sid": "<id>", "data": "<base64(encrypted_data)>"}
 # Channel returns: {"data": "<base64(encrypted_data)>"}
 
 profile_id: 2

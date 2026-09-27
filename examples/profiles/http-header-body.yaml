@@ -1,4 +1,4 @@
-# Implant sends: POST /api/data  Header "X-Request-ID: <id>"  Body {"data": "<encrypted_data>"}
+# Minion sends: POST /api/data  Header "X-Request-ID: <id>"  Body {"data": "<encrypted_data>"}
 # Channel returns: {"data": "<encrypted_data>"}
 
 profile_id: 3

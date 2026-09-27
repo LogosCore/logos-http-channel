@@ -1,4 +1,4 @@
-# Implant sends: POST /api/data
+# Minion sends: POST /api/data
 #   Header "X-Request-ID: <id>"
 #   Header "X-Trace-ID: <uuid>"          <- inbound noise
 #   Query  "_ref=<random>"               <- inbound noise

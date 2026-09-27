@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-`logos-http-channel` is a Go module that implements HTTP transport for Logos implant/session communication. It receives HTTP requests, resolves an obfuscation profile via channel-core's matcher, extracts canonical fields (id + encrypted_data), forwards them to a Logos sync endpoint, and returns the encrypted response.
+`logos-http-channel` is a Go module that implements HTTP transport for Logos minion/session communication. It receives HTTP requests, resolves an transposition profile via channel-core's matcher, extracts canonical fields (id + encrypted_data), forwards them to a Logos sync endpoint, and returns the encrypted response.
 
 ## Commands
 
@@ -16,7 +16,7 @@ go run ./cmd/http-channel --config .env
 go test ./...
 
 # Run a single test
-go test ./internal/transport/http/httpserver -run TestObfuscationProfiles_Body
+go test ./internal/transport/http/httpserver -run RunTest
 
 # Build binary
 go build -o http-channel ./cmd/http-channel
