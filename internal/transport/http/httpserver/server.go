@@ -1,204 +1,176 @@
 package httpserver
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	coreCache "github.com/logoscore/logos-golang-channel-core/pkg/cache"
-	coreMatcher "github.com/logoscore/logos-golang-channel-core/pkg/matcher"
-	coreProfile "github.com/logoscore/logos-golang-channel-core/pkg/profile"
-	coreRuntime "github.com/logoscore/logos-golang-channel-core/pkg/runtime"
-	coreSync "github.com/logoscore/logos-golang-channel-core/pkg/syncclient"
+	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
-type fieldSet struct {
-	location, key, value string
-}
+const uuidLen = 16
 
-type envelope struct {
-	data map[string]string
-	sets []fieldSet
-}
-
-func (e *envelope) SourceKey() string { return "http" }
-func (e *envelope) GetField(location, key string) (string, bool) {
-	v, ok := e.data[location+"."+key]
-	if ok {
-		return v, true
-	}
-	// Fallback: case-insensitive lookup (handles Go's canonical header casing
-	// vs profile-defined header keys like "X-Request-ID" → "X-Request-Id").
-	v, ok = e.data[location+"."+strings.ToLower(key)]
-	return v, ok
-}
-func (e *envelope) SetField(location, key, value string) {
-	e.data[location+"."+key] = value
-	e.sets = append(e.sets, fieldSet{location, key, value})
-}
-
-func newEnvelopeFromRequest(r *http.Request, body map[string]any, rawBody string) *envelope {
-	env := &envelope{data: map[string]string{}}
-	if body != nil {
-		for k, v := range body {
-			env.data["body."+k] = fmt.Sprintf("%v", v)
-		}
-	}
-	env.data["body."] = rawBody
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			env.data["header."+k] = v[0]
-			env.data["header."+strings.ToLower(k)] = v[0]
-		}
-	}
-	for k, v := range r.URL.Query() {
-		if len(v) > 0 {
-			env.data["query."+k] = v[0]
-		}
-	}
-	for _, c := range r.Cookies() {
-		env.data["cookie."+c.Name] = c.Value
-	}
-	return env
-}
-
-func cloneEnvelope(src *envelope) *envelope {
-	dst := &envelope{data: make(map[string]string, len(src.data))}
-	for k, v := range src.data {
-		dst.data[k] = v
-	}
-	return dst
-}
-
-func detectHintID(env *envelope, profiles []coreProfile.Profile) int32 {
-	for _, ref := range []struct{ loc, key string }{
-		{"query", "profile_id"},
-		{"header", "X-Profile-ID"},
-		{"header", "x-profile-id"},
-		{"cookie", "profile_id"},
-		{"body", "profile_id"},
-	} {
-		if v, ok := env.GetField(ref.loc, ref.key); ok && v != "" {
-			if id, err := strconv.ParseInt(v, 10, 32); err == nil {
-				return int32(id)
-			}
-		}
-	}
-	for _, p := range profiles {
-		if p.Mapping.ProfileID == nil {
-			continue
-		}
-		loc := strings.TrimSpace(p.Mapping.ProfileID.Target.Location)
-		key := strings.TrimSpace(p.Mapping.ProfileID.Target.Key)
-		if v, ok := env.GetField(loc, key); ok && v != "" {
-			if id, err := strconv.ParseInt(v, 10, 32); err == nil {
-				return int32(id)
-			}
-		}
-	}
-	return 0
-}
-
-func writeHTTPResponse(w http.ResponseWriter, env *envelope, p coreProfile.Profile) {
-	// Write noise headers and cookies set by runtime
-	for _, s := range env.sets {
-		switch strings.ToLower(s.location) {
-		case "header":
-			w.Header().Set(s.key, s.value)
-		case "cookie":
-			http.SetCookie(w, &http.Cookie{Name: s.key, Value: s.value, Path: "/"})
-		}
-	}
-
-	outLoc := strings.TrimSpace(strings.ToLower(p.Mapping.EncryptedDataOut.Target.Location))
-	outKey := strings.TrimSpace(p.Mapping.EncryptedDataOut.Target.Key)
-	encOut, _ := env.GetField(p.Mapping.EncryptedDataOut.Target.Location, outKey)
-
-	if outLoc == "body" && outKey == "" {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(encOut))
-		return
-	}
-
-	if outLoc == "header" {
-		w.Header().Set(outKey, encOut)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		outKey: encOut,
-	})
-}
-
-type profilesProvider interface{ Profiles() []coreProfile.Profile }
-
-type staticProfiles []coreProfile.Profile
-
-func (s staticProfiles) Profiles() []coreProfile.Profile {
-	return append([]coreProfile.Profile(nil), s...)
-}
-
-func New(addr, channelID, c2SyncBaseURL string, profiles []coreProfile.Profile) *http.Server {
-	return NewWithProvider(addr, channelID, c2SyncBaseURL, staticProfiles(profiles))
-}
-
-func NewWithProvider(addr, channelID, c2SyncBaseURL string, provider profilesProvider) *http.Server {
-	runtime := coreRuntime.New(coreSync.NewHTTPClient(c2SyncBaseURL, nil))
-	affinity := coreCache.NewAffinity(10 * time.Minute)
-	matcher := coreMatcher.NewWithCache(affinity)
+func New(addr, channelID, syncBaseURL string) *http.Server {
+	syncURL := strings.TrimRight(syncBaseURL, "/") + "/api/channel/sync"
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	mux.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		rawBytes, err := io.ReadAll(r.Body)
+
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
-			return
-		}
-		rawBody := string(rawBytes)
-		var body map[string]any
-		_ = json.Unmarshal(rawBytes, &body)
-
-		baseEnv := newEnvelopeFromRequest(r, body, rawBody)
-
-		profiles := provider.Profiles()
-		hintID := detectHintID(baseEnv, profiles)
-
-		candidates := matcher.EnabledOrdered(profiles)
-		if res, err := matcher.Resolve(r.Context(), r.RemoteAddr, hintID, candidates); err == nil {
-			candidates = []coreProfile.Profile{res.Profile}
-		}
-
-		var lastErr error
-		for _, p := range candidates {
-			env := cloneEnvelope(baseEnv)
-			_, err := runtime.HandleWithProfile(r.Context(), env, channelID, p)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			matcher.RecordMatch(r.RemoteAddr, p.ProfileID)
-			writeHTTPResponse(w, env, p)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		http.Error(w, "profile resolution failed: unmatched payload", http.StatusBadRequest)
-		_ = lastErr
+		id, encryptedData, err := unpack(body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		inbound := protocol.InboundMinionMessage{
+			MessageID: fmt.Sprintf("%s-%d", channelID, time.Now().UnixNano()),
+			Type:      protocol.TypeInboundMinionMessage,
+			Version:   protocol.VersionV1,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Source: protocol.SourceInfo{
+				Module:         "channel",
+				ModuleInstance: channelID,
+				Transport:      "http",
+				Tenant:         "default",
+			},
+			ID:            id,
+			EncryptedData: encryptedData,
+		}
+
+		outbound, err := syncWithCore(r.Context(), client, syncURL, inbound)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+
+		resp, err := pack(outbound.ID, outbound.EncryptedData)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(resp)
 	})
 
 	return &http.Server{Addr: addr, Handler: mux}
+}
+
+// unpack parses: [offset:1][enc_part1:offset][id:16][enc_part2:rest]
+func unpack(body []byte) (id string, encryptedData string, err error) {
+	if len(body) < 1+uuidLen {
+		return "", "", fmt.Errorf("body too short: need at least %d bytes", 1+uuidLen)
+	}
+
+	offset := int(body[0])
+	if 1+offset+uuidLen > len(body) {
+		return "", "", fmt.Errorf("invalid offset %d for body length %d", offset, len(body))
+	}
+
+	encPart1 := body[1 : 1+offset]
+	rawID := body[1+offset : 1+offset+uuidLen]
+	encPart2 := body[1+offset+uuidLen:]
+
+	id = formatUUID(rawID)
+
+	enc := make([]byte, 0, len(encPart1)+len(encPart2))
+	enc = append(enc, encPart1...)
+	enc = append(enc, encPart2...)
+	if len(enc) > 0 {
+		encryptedData = base64.StdEncoding.EncodeToString(enc)
+	}
+	return id, encryptedData, nil
+}
+
+// pack builds: [offset:1][enc_part1:offset][id:16][enc_part2:rest]
+func pack(id string, encryptedData string) ([]byte, error) {
+	rawID, err := parseUUID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	var encBytes []byte
+	if encryptedData != "" {
+		encBytes, err = base64.StdEncoding.DecodeString(encryptedData)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 encrypted_data: %w", err)
+		}
+	}
+
+	maxOffset := len(encBytes)
+	if maxOffset > 255 {
+		maxOffset = 255
+	}
+	offset := 0
+	if maxOffset > 0 {
+		offset = rand.IntN(maxOffset + 1)
+	}
+
+	buf := make([]byte, 0, 1+len(encBytes)+uuidLen)
+	buf = append(buf, byte(offset))
+	buf = append(buf, encBytes[:offset]...)
+	buf = append(buf, rawID...)
+	buf = append(buf, encBytes[offset:]...)
+	return buf, nil
+}
+
+func formatUUID(b []byte) string {
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func parseUUID(s string) ([]byte, error) {
+	clean := strings.ReplaceAll(s, "-", "")
+	if len(clean) != 32 {
+		return nil, fmt.Errorf("invalid UUID: %s", s)
+	}
+	return hex.DecodeString(clean)
+}
+
+func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbound protocol.InboundMinionMessage) (protocol.OutboundMinionMessage, error) {
+	payload, err := json.Marshal(inbound)
+	if err != nil {
+		return protocol.OutboundMinionMessage{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, bytes.NewReader(payload))
+	if err != nil {
+		return protocol.OutboundMinionMessage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return protocol.OutboundMinionMessage{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return protocol.OutboundMinionMessage{}, fmt.Errorf("core sync returned %d", resp.StatusCode)
+	}
+
+	var outbound protocol.OutboundMinionMessage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&outbound); err != nil {
+		return protocol.OutboundMinionMessage{}, err
+	}
+	return outbound, nil
 }

@@ -1,56 +1,35 @@
 # logos-http-channel
 
-First production channel module for Logos.
+HTTP channel module for Logos.
 
 ## Purpose
 
-`logos-http-channel` implements HTTP transport for minion <-> Server communication using:
+Receives POST requests with a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, builds a canonical envelope, and forwards it to the Logos core sync endpoint. Disassembles the outbound envelope back into the same binary format for the response.
 
-- `github.com/logoscore/logos-golang-channel-core` (latest)
-- `github.com/logoscore/logos-golang-protocol`
+Uses `github.com/logoscore/logos-golang-protocol` for canonical envelope types.
 
-## Scope (v0)
+## Binary Wire Format
 
-- receive inbound HTTP requests
-- resolve profile via channel-core matcher (`hint` -> `fallback`)
-- pass canonical values into channel-core profile-aware runtime
-- call Logos sync endpoint through channel-core runtime
-- return outbound encrypted payload
+Request and response share the same structure:
+
+```
+[offset:1][enc_part1:offset bytes][id:16 bytes raw UUIDv4][enc_part2:remaining]
+```
+
+- `offset` — byte position where the 16-byte UUID sits within the encrypted payload (0–255)
+- `id` — raw UUIDv4 (16 bytes)
+- `encrypted_data` — `enc_part1 + enc_part2` concatenated
+- Response offset is randomized per response
 
 ## Configuration
 
-Runtime config is read from environment variables:
+Environment variables:
 
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`)
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:9000`)
-- `PROFILES_DIR` (default: `profiles`)
 
-`.env` fallback:
-
-- Pass path with `--config <path-to-env-file>`
-- `.env` is loaded as fallback only (existing environment variables win)
-
-Profiles are loaded from YAML files in `PROFILES_DIR` and resolved via channel-core matcher.
-
-Startup behavior:
-
-- create `PROFILES_DIR` if it does not exist
-- ensure `default.yaml` exists in that folder
-- if missing, copy `examples/profiles/default.yaml` into `PROFILES_DIR/default.yaml`
-  - default profile expects raw body payload `base64(id+encrypted_data)`
-- watch `PROFILES_DIR` continuously:
-  - new profile files are loaded instantly
-  - updates to existing profile files are applied instantly
-  - deleted profiles are unloaded instantly
-
-Mapping refs support location prefixes:
-- `body:<field>`
-- `header:<name>`
-- `query:<name>`
-- `cookie:<name>`
-
-Example: `id: query:minion_id`, `encrypted_data: header:X-Payload`.
+`.env` fallback: pass path with `--config <path>`. Existing env vars take precedence.
 
 ## Run
 
@@ -58,22 +37,10 @@ Example: `id: query:minion_id`, `encrypted_data: header:X-Payload`.
 go run ./cmd/http-channel --config .env
 ```
 
-## Integration Tests
-
-This module includes integration tests with a built-in `test-logos-core` simulator for `/api/channel/sync`.
-
-Run:
+## Tests
 
 ```bash
 go test ./...
 ```
 
-Covered transposition profile scenarios (loaded from `examples/profiles/*.yaml`):
-
-- `body` mapping
-- `header` mapping
-- `query` mapping
-- `cookie` mapping
-- hint-routed profile selection
-- `base64` transform pipeline (`decode inbound` + `encode outbound`)
-- ambiguous profile hint error handling
+Integration tests use a built-in core simulator that stubs `/api/channel/sync`.
