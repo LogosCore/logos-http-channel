@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Breaking:
+
+- Any HTTP method is accepted as a minion message, not only POST.
+- Every failure returns a plain `404 page not found` (previously 400/405/413/500/502).
+- `/healthz` moved to a separate internal server (`HEALTH_LISTEN_ADDR`, default `:8081`).
+  On the client port, `/healthz` is handled as a normal message path.
+
+Added:
+
+- `MAX_BODY_BYTES` (default 1 MiB) configures the request body cap.
+  The core reply limit scales with it.
+
 ## v2.0.0
 
 Breaking: the wire format and runtime model are replaced.

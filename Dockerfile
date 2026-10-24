@@ -15,6 +15,9 @@ WORKDIR /app
 COPY --from=builder /out/http-channel /app/http-channel
 # The binary is configured entirely from the environment (see
 # internal/config.LoadFromEnv).
+# 8080 is the client-facing port. The health server (HEALTH_LISTEN_ADDR,
+# default :8081) is intentionally not EXPOSEd so `docker run -P` won't
+# publish it; reach it from the Docker network only. Never publish it.
 EXPOSE 8080
 
 ENTRYPOINT ["/app/http-channel"]

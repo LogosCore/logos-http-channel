@@ -25,6 +25,17 @@ var testUUID = []byte{
 
 const testUUIDStr = "550e8400-e29b-41d4-a716-446655440000"
 
+const testMaxBody = 1 << 20
+
+func assertPlain404(t *testing.T, resp *http.Response, what string) {
+	t.Helper()
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || string(body) != "404 page not found\n" {
+		t.Fatalf("%s: status = %d, body = %q, want plain 404", what, resp.StatusCode, body)
+	}
+}
+
 func TestUnpack_Valid(t *testing.T) {
 	encData := []byte("hello-encrypted")
 	payload := buildPayload(5, encData, testUUID)
@@ -138,7 +149,7 @@ func TestIntegration_PostSync(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", "http-main", core.URL())
+	srv := New(":0", "http-main", core.URL(), testMaxBody)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -179,23 +190,27 @@ func TestIntegration_PostSync(t *testing.T) {
 	}
 }
 
-func TestNonPost_Rejected(t *testing.T) {
+func TestAnyMethod_Works(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", "http-main", core.URL())
+	srv := New(":0", "http-main", core.URL(), testMaxBody)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		req, _ := http.NewRequest(method, ts.URL+"/test", nil)
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions} {
+		req, _ := http.NewRequest(method, ts.URL+"/test", bytes.NewReader(buildPayload(2, []byte("test"), testUUID)))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Fatalf("%s: status = %d, want 405", method, resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", method, resp.StatusCode)
+		}
+		if id, _, err := unpack(body); err != nil || id != testUUIDStr {
+			t.Fatalf("%s: unpack response: id = %s, err = %v", method, id, err)
 		}
 	}
 }
@@ -204,12 +219,12 @@ func TestAnyPath_Works(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", "http-main", core.URL())
+	srv := New(":0", "http-main", core.URL(), testMaxBody)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
 	encData := []byte("test")
-	paths := []string{"/", "/sync", "/api/v1/data", "/wp-json/posts", "/pixel.gif", "/graphql"}
+	paths := []string{"/", "/sync", "/api/v1/data", "/wp-json/posts", "/pixel.gif", "/graphql", "/healthz", "//double//slash", "/a/../b"}
 	for _, path := range paths {
 		payload := buildPayload(2, encData, testUUID)
 		resp, err := http.Post(ts.URL+path, "application/octet-stream", bytes.NewReader(payload))
@@ -223,30 +238,78 @@ func TestAnyPath_Works(t *testing.T) {
 	}
 }
 
-func TestEmptyBody_Rejected(t *testing.T) {
+func TestEmptyBody_NotFound(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", "http-main", core.URL())
+	srv := New(":0", "http-main", core.URL(), testMaxBody)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(nil))
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		req, _ := http.NewRequest(method, ts.URL+"/test", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPlain404(t, resp, method)
+	}
+}
+
+func TestOversizedBody_NotFound(t *testing.T) {
+	core := newTestLogosCore(t)
+	defer core.Close()
+
+	const limit = 64
+	srv := New(":0", "http-main", core.URL(), limit)
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+
+	atLimit := buildPayload(0, make([]byte, limit-1-uuidLen), testUUID)
+	resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(atLimit))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("at limit: status = %d, want 200", resp.StatusCode)
+	}
+
+	overLimit := buildPayload(0, make([]byte, limit-uuidLen), testUUID)
+	resp, err = http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(overLimit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPlain404(t, resp, "over limit")
+}
+
+func TestCoreFailure_NotFound(t *testing.T) {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	garbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"not-a-uuid"}`))
+	}))
+	down := httptest.NewServer(http.NotFoundHandler())
+	downURL := down.URL
+	down.Close()
+	defer failing.Close()
+	defer garbage.Close()
+
+	for name, coreURL := range map[string]string{"core 500": failing.URL, "bad reply": garbage.URL, "core down": downURL} {
+		srv := New(":0", "http-main", coreURL, testMaxBody)
+		ts := httptest.NewServer(srv.Handler)
+		resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(buildPayload(2, []byte("test"), testUUID)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPlain404(t, resp, name)
+		ts.Close()
 	}
 }
 
-func TestHealthz(t *testing.T) {
-	core := newTestLogosCore(t)
-	defer core.Close()
-
-	srv := New(":0", "http-main", core.URL())
-	ts := httptest.NewServer(srv.Handler)
+func TestHealthz_InternalServer(t *testing.T) {
+	ts := httptest.NewServer(NewHealth(":0").Handler)
 	defer ts.Close()
 
 	resp, err := http.Get(ts.URL + "/healthz")
@@ -259,21 +322,17 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestOversizedBody_Rejected(t *testing.T) {
+func TestHealthz_PublicServerTreatsAsMessage(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", "http-main", core.URL())
+	srv := New(":0", "http-main", core.URL(), testMaxBody)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
-	payload := buildPayload(0, make([]byte, maxBodyBytes), testUUID)
-	resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(payload))
+	resp, err := http.Get(ts.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413", resp.StatusCode)
-	}
+	assertPlain404(t, resp, "GET /healthz without body")
 }

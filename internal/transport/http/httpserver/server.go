@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,39 +19,31 @@ import (
 
 const uuidLen = 16
 
-// maxBodyBytes caps inbound request bodies.
-const maxBodyBytes = 1 << 20
+// envelopeOverhead bounds the JSON fields around encrypted_data in a core reply.
+const envelopeOverhead = 64 << 10
 
-func New(addr, channelID, syncBaseURL string) *http.Server {
+// New returns the client-facing server. Every request, whatever its method
+// or path, is treated as a minion message; any failure answers with a plain 404.
+func New(addr, channelID, syncBaseURL string, maxBodyBytes int64) *http.Server {
 	syncURL := strings.TrimRight(syncBaseURL, "/") + "/api/channel/sync"
 	client := &http.Client{Timeout: 30 * time.Second}
+	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
+	maxReplyBytes := 2*maxBodyBytes + envelopeOverhead
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
+	// A bare handler, not a ServeMux: the mux answers unclean paths with
+	// redirects, and every response here must be either the reply or a 404.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
 			log.Printf("read body: %v", err)
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
-				w.WriteHeader(http.StatusRequestEntityTooLarge)
-				return
-			}
-			w.WriteHeader(http.StatusBadRequest)
+			http.NotFound(w, r)
 			return
 		}
 
 		id, encryptedData, err := unpack(body)
 		if err != nil {
 			log.Printf("unpack: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
+			http.NotFound(w, r)
 			return
 		}
 
@@ -71,17 +62,17 @@ func New(addr, channelID, syncBaseURL string) *http.Server {
 			EncryptedData: encryptedData,
 		}
 
-		outbound, err := syncWithCore(r.Context(), client, syncURL, inbound)
+		outbound, err := syncWithCore(r.Context(), client, syncURL, maxReplyBytes, inbound)
 		if err != nil {
 			log.Printf("core sync: %v", err)
-			w.WriteHeader(http.StatusBadGateway)
+			http.NotFound(w, r)
 			return
 		}
 
 		resp, err := pack(outbound.ID, outbound.EncryptedData)
 		if err != nil {
 			log.Printf("pack: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			http.NotFound(w, r)
 			return
 		}
 
@@ -89,6 +80,16 @@ func New(addr, channelID, syncBaseURL string) *http.Server {
 		_, _ = w.Write(resp)
 	})
 
+	return &http.Server{Addr: addr, Handler: handler}
+}
+
+// NewHealth returns the internal health server. It listens on its own port,
+// which is not published outside the Docker network.
+func NewHealth(addr string) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	return &http.Server{Addr: addr, Handler: mux}
 }
 
@@ -163,7 +164,7 @@ func parseUUID(s string) ([]byte, error) {
 	return hex.DecodeString(clean)
 }
 
-func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbound protocol.InboundMinionMessage) (protocol.OutboundMinionMessage, error) {
+func syncWithCore(ctx context.Context, client *http.Client, syncURL string, maxReplyBytes int64, inbound protocol.InboundMinionMessage) (protocol.OutboundMinionMessage, error) {
 	payload, err := json.Marshal(inbound)
 	if err != nil {
 		return protocol.OutboundMinionMessage{}, err
@@ -186,7 +187,7 @@ func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbo
 	}
 
 	var outbound protocol.OutboundMinionMessage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&outbound); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReplyBytes)).Decode(&outbound); err != nil {
 		return protocol.OutboundMinionMessage{}, err
 	}
 	return outbound, nil

@@ -27,19 +27,25 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := httpserver.New(cfg.Listen, cfg.ChannelID, cfg.LogosSyncBaseURL)
-	go func() {
-		log.Printf("logos-http-channel listening on %s (channel_id=%s, logos=%s)", srv.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
-		}
-	}()
+	srv := httpserver.New(cfg.Listen, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.MaxBodyBytes)
+	health := httpserver.NewHealth(cfg.HealthListen)
+	for _, s := range []*http.Server{srv, health} {
+		go func() {
+			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
+	log.Printf("logos-http-channel listening on %s, health on %s (channel_id=%s, logos=%s, max_body=%d)",
+		srv.Addr, health.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.MaxBodyBytes)
 
 	<-ctx.Done()
 	log.Printf("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
+	for _, s := range []*http.Server{srv, health} {
+		if err := s.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown %s: %v", s.Addr, err)
+		}
 	}
 }

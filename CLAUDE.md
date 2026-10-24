@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-`logos-http-channel` is a Go module that implements HTTP transport for Logos minion communication. It receives POST requests containing a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, wraps them in a canonical envelope, and forwards to the Logos core sync endpoint. The response envelope is disassembled back into the same binary format.
+`logos-http-channel` is a Go module that implements HTTP transport for Logos minion communication. It receives HTTP requests (any method, any path) containing a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, wraps them in a canonical envelope, and forwards to the Logos core sync endpoint. The response envelope is disassembled back into the same binary format.
 
 ## Commands
 
@@ -27,22 +27,24 @@ go build -o http-channel ./cmd/http-channel # build binary
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, base64-encoded for the envelope
 - Response uses a random offset so the UUID position varies per response
 
-**Entrypoint:** `cmd/http-channel/main.go` — loads config, starts HTTP server.
+**Entrypoint:** `cmd/http-channel/main.go` — loads config, starts the client server and the internal health server, shuts both down on SIGINT/SIGTERM.
 
 **Two internal packages:**
 
-- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`)
-- `internal/transport/http/httpserver/` — HTTP server with `GET /healthz` and a catch-all POST handler (1 MiB body cap). Contains binary pack/unpack logic and inline sync client.
+- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`)
+- `internal/transport/http/httpserver/` — `New` is the client server: a bare handler (no ServeMux, so no redirects) treating every request as a message. `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
 
 **Request flow:**
 
-1. Accept POST on any URL path
+1. Accept any method on any URL path (body capped at `MAX_BODY_BYTES`)
 2. Parse binary body: extract offset, raw UUID, encrypted data parts
 3. Build `InboundMinionMessage` envelope (base64 encrypted_data, formatted UUID string)
 4. POST envelope as JSON to `{LOGOS_SYNC_BASE_URL}/api/channel/sync`
 5. Receive `OutboundMinionMessage` from core
 6. Pack response: random offset, split encrypted_data, embed raw UUID
 7. Return raw bytes (`application/octet-stream`)
+
+**Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
 **External dependency:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`).
 
