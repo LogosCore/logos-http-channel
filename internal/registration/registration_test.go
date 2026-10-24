@@ -16,7 +16,7 @@ func TestRun_StopsOnCancelWhileBrokerUnreachable(t *testing.T) {
 		// Port 1 refuses connections, so Run sits in its retry backoff.
 		Run(ctx, "amqp://guest:guest@127.0.0.1:1/", lifecycle.Identity{
 			ModuleType: "channel", ModuleName: "http", Instance: "test", RPCQueue: "q",
-		})
+		}, nil)
 	}()
 
 	time.Sleep(100 * time.Millisecond)

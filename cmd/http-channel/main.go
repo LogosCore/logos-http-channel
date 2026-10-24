@@ -12,6 +12,7 @@ import (
 
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
 	"github.com/logoscore/logos-http-channel/internal/config"
+	"github.com/logoscore/logos-http-channel/internal/management"
 	"github.com/logoscore/logos-http-channel/internal/registration"
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
 )
@@ -37,6 +38,12 @@ func main() {
 		MaxBodyBytes: cfg.MaxBodyBytes,
 	})
 	srv := httpserver.New(cfg.Listen, handler)
+	// Without management (e.g. an env value the manifest rejects) the channel
+	// still serves and registers; core just cannot manage it.
+	mgmtSrv, err := management.New(cfg, handler)
+	if err != nil {
+		log.Printf("management disabled: %v", err)
+	}
 	health := httpserver.NewHealth(cfg.HealthListen)
 	for _, s := range []*http.Server{srv, health} {
 		go func() {
@@ -60,7 +67,7 @@ func main() {
 			Instance:   cfg.ChannelID,
 			Version:    version,
 			RPCQueue:   "logos.channel.rpc." + cfg.ChannelID,
-		})
+		}, mgmtSrv, management.LifecycleStatus(handler))
 	}()
 
 	<-ctx.Done()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
+	"github.com/logoscore/logos-golang-channel-core/v2/pkg/mgmt"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -23,11 +24,14 @@ const (
 // cancelled, then deregisters. Lifecycle.Client gives up on a failed initial
 // register and never recovers a dropped broker connection, so Run supervises
 // it: every failure reconnects with exponential backoff.
-func Run(ctx context.Context, amqpURL string, id lifecycle.Identity) {
+//
+// With a non-nil srv, each session first serves srv on id.RPCQueue, then
+// registers with srv's manifest. opts are extra lifecycle options.
+func Run(ctx context.Context, amqpURL string, id lifecycle.Identity, srv *mgmt.Server, opts ...lifecycle.Option) {
 	backoff := minBackoff
 	for {
 		started := time.Now()
-		err := runSession(ctx, amqpURL, id)
+		err := runSession(ctx, amqpURL, id, srv, opts)
 		if ctx.Err() != nil {
 			return
 		}
@@ -47,7 +51,7 @@ func Run(ctx context.Context, amqpURL string, id lifecycle.Identity) {
 
 // runSession runs one broker connection's worth of lifecycle. It returns nil
 // only on ctx cancellation (after deregistering).
-func runSession(ctx context.Context, amqpURL string, id lifecycle.Identity) error {
+func runSession(ctx context.Context, amqpURL string, id lifecycle.Identity, srv *mgmt.Server, opts []lifecycle.Option) error {
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
 		return fmt.Errorf("connect to RabbitMQ: %w", err)
@@ -60,6 +64,19 @@ func runSession(ctx context.Context, amqpURL string, id lifecycle.Identity) erro
 	}
 	defer pub.Close()
 
+	// Core may call the rpc_queue as soon as it acks the register, so the
+	// consumer must be up first. It is closed after the deregister.
+	var mgmtDone <-chan struct{}
+	if srv != nil {
+		consumer, err := mgmt.NewAMQPConsumer(conn, id.RPCQueue, id.Instance, srv)
+		if err != nil {
+			return fmt.Errorf("serve management on %q: %w", id.RPCQueue, err)
+		}
+		defer consumer.Close()
+		mgmtDone = consumer.Done()
+		opts = append([]lifecycle.Option{lifecycle.WithManagement(srv)}, opts...)
+	}
+
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	connLost := make(chan error, 1)
@@ -69,11 +86,14 @@ func runSession(ctx context.Context, amqpURL string, id lifecycle.Identity) erro
 		case e := <-closed:
 			connLost <- fmt.Errorf("RabbitMQ connection closed: %v", e)
 			cancel()
+		case <-mgmtDone: // nil without management: never ready
+			connLost <- fmt.Errorf("management consumer on %q stopped", id.RPCQueue)
+			cancel()
 		case <-sessionCtx.Done():
 		}
 	}()
 
-	client := lifecycle.NewClient(loggingPublisher{pub: pub, instance: id.Instance, connClosed: conn.IsClosed}, id)
+	client := lifecycle.NewClient(loggingPublisher{pub: pub, instance: id.Instance, connClosed: conn.IsClosed}, id, opts...)
 	if err := client.Run(sessionCtx); err != nil {
 		return err
 	}
