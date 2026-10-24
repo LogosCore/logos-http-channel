@@ -33,11 +33,12 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/logoscore/logos-http-channel
+          # Only tag pushes trigger this workflow; latest moves on stable (non-prerelease) tags.
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
