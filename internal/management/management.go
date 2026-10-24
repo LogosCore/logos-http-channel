@@ -143,12 +143,16 @@ func apply(ctx context.Context, h *httpserver.Handler, live map[string]any) erro
 	if lvl, ok := live["log_level"].(string); ok {
 		next.LogLevel = lvl
 	}
+	// Restart-mode: only present here in the startup apply (see mgmt.Server).
+	if u, ok := live["logos_sync_base_url"].(string); ok && u != "" {
+		next.SyncURL = httpserver.SyncURL(u)
+	}
 	if next == prev {
 		return nil
 	}
 	h.SetConfig(next)
-	log.Printf("management: config applied by %s (max_body=%d core_sync_timeout=%s log_level=%s)",
-		actorName(mgmt.ActorFromContext(ctx)), next.MaxBodyBytes, next.CoreSyncTimeout, next.LogLevel)
+	log.Printf("management: config applied by %s (max_body=%d core_sync_timeout=%s log_level=%s sync_url=%s)",
+		actorName(mgmt.ActorFromContext(ctx)), next.MaxBodyBytes, next.CoreSyncTimeout, next.LogLevel, next.SyncURL)
 	return nil
 }
 

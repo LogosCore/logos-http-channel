@@ -32,6 +32,8 @@ const (
 
 // RuntimeConfig holds the settings core can change live via management.
 type RuntimeConfig struct {
+	// SyncURL is core's sync endpoint (see SyncURL). Empty keeps the current one.
+	SyncURL         string
 	MaxBodyBytes    int64
 	CoreSyncTimeout time.Duration
 	LogLevel        string
@@ -63,7 +65,6 @@ var errRejectedByCore = errors.New("core sync returned 403")
 // every response here must be either the reply or a 404.
 type Handler struct {
 	channelID string
-	syncURL   string
 	client    *http.Client
 
 	cfg      atomic.Pointer[RuntimeConfig]
@@ -77,9 +78,11 @@ type Handler struct {
 func NewHandler(channelID, syncBaseURL string, cfg RuntimeConfig) *Handler {
 	h := &Handler{
 		channelID: channelID,
-		syncURL:   SyncURL(syncBaseURL),
 		// Timeouts are per request (RuntimeConfig.CoreSyncTimeout).
 		client: &http.Client{},
+	}
+	if cfg.SyncURL == "" {
+		cfg.SyncURL = SyncURL(syncBaseURL)
 	}
 	h.SetConfig(cfg)
 	return h
@@ -105,6 +108,11 @@ func (h *Handler) SetConfig(cfg RuntimeConfig) {
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = LogInfo
 	}
+	if cfg.SyncURL == "" {
+		if prev := h.cfg.Load(); prev != nil {
+			cfg.SyncURL = prev.SyncURL
+		}
+	}
 	h.cfg.Store(&cfg)
 }
 
@@ -118,7 +126,7 @@ func (h *Handler) SetDraining(v bool) { h.draining.Store(v) }
 func (h *Handler) Draining() bool { return h.draining.Load() }
 
 // SyncEndpoint returns the core sync URL requests are forwarded to.
-func (h *Handler) SyncEndpoint() string { return h.syncURL }
+func (h *Handler) SyncEndpoint() string { return h.cfg.Load().SyncURL }
 
 // Client returns the HTTP client used for core calls.
 func (h *Handler) Client() *http.Client { return h.client }
@@ -188,7 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
 	maxReplyBytes := 2*cfg.MaxBodyBytes + envelopeOverhead
-	outbound, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound)
+	outbound, err := syncWithCore(ctx, h.client, cfg.SyncURL, maxReplyBytes, inbound)
 	if err != nil {
 		if errors.Is(err, errRejectedByCore) {
 			h.rejected.Add(1)

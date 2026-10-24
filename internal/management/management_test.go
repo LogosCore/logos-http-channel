@@ -53,8 +53,26 @@ func envelope(t *testing.T, typ string, payload any) protocol.Envelope {
 	return protocol.Envelope{MessageID: id, CorrelationID: id, Type: typ, Version: protocol.EnvelopeVersionV1, Payload: raw}
 }
 
+func TestStartupApplyAdoptsSyncURL(t *testing.T) {
+	h, handle := newServer(t, "http://core:8002")
+	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 1, Values: map[string]any{
+			"logos_sync_base_url": "http://elsewhere:9000",
+		}},
+	}))
+	var out protocol.ConfigApplyReply
+	if err := json.Unmarshal(rep.Payload, &out); err != nil || len(out.RestartRequired) != 0 {
+		t.Fatalf("reply = %+v (%v)", rep, err)
+	}
+	if h.SyncEndpoint() != "http://elsewhere:9000/api/channel/sync" {
+		t.Errorf("startup apply did not adopt the sync URL: %s", h.SyncEndpoint())
+	}
+}
+
 func TestApplyUpdatesHandlerLive(t *testing.T) {
 	h, handle := newServer(t, "http://core:8002")
+	// The startup apply (register reply), with nothing managed yet.
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{}))
 	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
 		ManagementConfig: protocol.ManagementConfig{Revision: 1, Values: map[string]any{
 			"max_body_bytes":      4096,
@@ -70,7 +88,7 @@ func TestApplyUpdatesHandlerLive(t *testing.T) {
 	if !slices.Equal(out.RestartRequired, []string{"logos_sync_base_url"}) || len(out.Rejected) != 0 {
 		t.Errorf("reply = %+v", out)
 	}
-	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096, CoreSyncTimeout: 5 * time.Second, LogLevel: "debug"}
+	want := httpserver.RuntimeConfig{SyncURL: "http://core:8002/api/channel/sync", MaxBodyBytes: 4096, CoreSyncTimeout: 5 * time.Second, LogLevel: "debug"}
 	if got := h.Config(); got != want {
 		t.Errorf("config = %+v, want %+v", got, want)
 	}
