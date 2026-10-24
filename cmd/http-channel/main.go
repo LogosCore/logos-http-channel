@@ -33,7 +33,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := httpserver.New(cfg.Listen, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.MaxBodyBytes)
+	handler := httpserver.NewHandler(cfg.ChannelID, cfg.LogosSyncBaseURL, httpserver.RuntimeConfig{
+		MaxBodyBytes: cfg.MaxBodyBytes,
+	})
+	srv := httpserver.New(cfg.Listen, handler)
 	health := httpserver.NewHealth(cfg.HealthListen)
 	for _, s := range []*http.Server{srv, health} {
 		go func() {
