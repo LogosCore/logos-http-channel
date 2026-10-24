@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.1.0
+
+- Registers with core over RabbitMQ (`module.register` / heartbeat /
+  `module.deregister`) using `logos-golang-channel-core/v2` `pkg/lifecycle`, so
+  core's registration gate accepts this channel's sync traffic. Reconnects with
+  backoff when RabbitMQ or core is unavailable; deregisters on shutdown after
+  draining in-flight requests.
+- New config: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`,
+  `RABBITMQ_PASSWORD`, `RABBITMQ_VHOST`. `CHANNEL_ID` is the registration instance id.
+- Default `LOGOS_SYNC_BASE_URL` is now `http://localhost:8002` (core's port).
+- Image build version is reported to core at registration.
+- Fixed: the `linux/arm64` image contained an amd64 binary.
+
 ## v3.0.0
 
 Breaking:

@@ -29,6 +29,17 @@ Request and response share the same structure:
 - On any failure (malformed or oversized body, core unreachable, core non-200,
   invalid core reply): a plain `404 page not found`. The reason is only logged.
 
+## Registration with core
+
+Core only accepts sync traffic from registered module instances. On startup the
+channel registers over RabbitMQ (`module.register` on `logos.core.rpc`) as
+`module_type=channel`, `module_name=http`, `instance=CHANNEL_ID`, then sends
+heartbeats on the interval core returns. It reconnects with backoff if RabbitMQ
+or core is unavailable and deregisters on shutdown. Until it is registered,
+core rejects messages and clients get 404s (the channel logs `core sync returned 403`).
+
+Run each instance with a distinct `CHANNEL_ID`.
+
 ## Health check
 
 `GET /healthz` is served on a separate internal port (`HEALTH_LISTEN_ADDR`,
@@ -40,11 +51,25 @@ Environment variables:
 
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`)
-- `LOGOS_SYNC_BASE_URL` (default: `http://localhost:9000`)
+- `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, minimum 17
+- `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`
+  (defaults: `localhost` / `5672` / `guest` / `guest` / `/`) — core's control-plane broker
 
 `.env` fallback: pass path with `--config <path>`. Existing env vars take precedence.
+
+## Run with logos-core's dev stack
+
+Join core's compose network and point at its containers:
+
+```bash
+docker run --network logos-core_logos -p 8080:8080 \
+  -e CHANNEL_ID=http-1 \
+  -e LOGOS_SYNC_BASE_URL=http://logos-core-dev:8002 \
+  -e RABBITMQ_HOST=logos-rabbitmq -e RABBITMQ_USER=logos -e RABBITMQ_PASSWORD=... \
+  ghcr.io/logoscore/logos-http-channel:latest
+```
 
 ## Run
 

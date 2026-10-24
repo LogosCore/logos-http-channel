@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	amqp "github.com/rabbitmq/amqp091-go"
+)
 
 func TestLoadFromEnv_Defaults(t *testing.T) {
 	cfg, err := LoadFromEnv("")
@@ -31,6 +35,31 @@ func TestLoadFromEnv_InvalidMaxBodyBytes(t *testing.T) {
 		t.Setenv("MAX_BODY_BYTES", v)
 		if _, err := LoadFromEnv(""); err == nil {
 			t.Fatalf("MAX_BODY_BYTES=%s: expected error", v)
+		}
+	}
+}
+
+func TestLoadFromEnv_RabbitMQURL(t *testing.T) {
+	cases := []struct {
+		vhost, password, want string
+	}{
+		{"", "guest", "/"},
+		{"/", "p@ss/word", "/"},
+		{"logos", "guest", "logos"},
+	}
+	for _, c := range cases {
+		t.Setenv("RABBITMQ_VHOST", c.vhost)
+		t.Setenv("RABBITMQ_PASSWORD", c.password)
+		cfg, err := LoadFromEnv("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		uri, err := amqp.ParseURI(cfg.RabbitMQURL)
+		if err != nil {
+			t.Fatalf("vhost %q: parse %s: %v", c.vhost, cfg.RabbitMQURL, err)
+		}
+		if uri.Vhost != c.want || uri.Password != c.password || uri.Host != "localhost" || uri.Port != 5672 {
+			t.Fatalf("vhost %q: got %+v, want vhost %q password %q", c.vhost, uri, c.want, c.password)
 		}
 	}
 }

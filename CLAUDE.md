@@ -27,12 +27,13 @@ go build -o http-channel ./cmd/http-channel # build binary
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, base64-encoded for the envelope
 - Response uses a random offset so the UUID position varies per response
 
-**Entrypoint:** `cmd/http-channel/main.go` — loads config, starts the client server and the internal health server, shuts both down on SIGINT/SIGTERM.
+**Entrypoint:** `cmd/http-channel/main.go` — loads config, starts the client server, the internal health server and the registration loop. On SIGINT/SIGTERM it drains the servers first, then deregisters.
 
-**Two internal packages:**
+**Internal packages:**
 
-- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`)
+- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `RABBITMQ_*`)
 - `internal/transport/http/httpserver/` — `New` is the client server: a bare handler (no ServeMux, so no redirects) treating every request as a message. `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
+- `internal/registration/` — keeps the instance registered with core over AMQP using `logos-golang-channel-core/v2/pkg/lifecycle`; supervises it with reconnect/backoff and logs lifecycle outcomes. Core rejects sync (403 → client 404) from unregistered instances.
 
 **Request flow:**
 
@@ -46,7 +47,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
-**External dependency:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`).
+**External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — lifecycle (registration) client only.
 
 ## Testing
 

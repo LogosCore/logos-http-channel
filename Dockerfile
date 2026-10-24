@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+# No GOARCH: the build stage runs as the target platform (QEMU in CI), so the
+# binary always matches the image's architecture.
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 
@@ -7,7 +9,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/http-channel ./cmd/http-channel
+# VERSION is reported to core at registration.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/http-channel ./cmd/http-channel
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
