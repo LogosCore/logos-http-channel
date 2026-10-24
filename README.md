@@ -21,6 +21,13 @@ Request and response share the same structure:
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated
 - Response offset is randomized per response
 
+## Endpoints
+
+- `POST /<any path>` — binary sync request (above)
+- `GET /healthz` — liveness check, returns 200
+
+Request bodies larger than 1 MiB are rejected with 413.
+
 ## Configuration
 
 Environment variables:

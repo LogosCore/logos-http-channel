@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net/http"
 	"strings"
@@ -18,25 +20,38 @@ import (
 
 const uuidLen = 16
 
+// maxBodyBytes caps inbound request bodies.
+const maxBodyBytes = 1 << 20
+
 func New(addr, channelID, syncBaseURL string) *http.Server {
 	syncURL := strings.TrimRight(syncBaseURL, "/") + "/api/channel/sync"
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
+			log.Printf("read body: %v", err)
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				return
+			}
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
 		id, encryptedData, err := unpack(body)
 		if err != nil {
+			log.Printf("unpack: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -58,12 +73,14 @@ func New(addr, channelID, syncBaseURL string) *http.Server {
 
 		outbound, err := syncWithCore(r.Context(), client, syncURL, inbound)
 		if err != nil {
+			log.Printf("core sync: %v", err)
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
 
 		resp, err := pack(outbound.ID, outbound.EncryptedData)
 		if err != nil {
+			log.Printf("pack: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}

@@ -240,3 +240,40 @@ func TestEmptyBody_Rejected(t *testing.T) {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestHealthz(t *testing.T) {
+	core := newTestLogosCore(t)
+	defer core.Close()
+
+	srv := New(":0", "http-main", core.URL())
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestOversizedBody_Rejected(t *testing.T) {
+	core := newTestLogosCore(t)
+	defer core.Close()
+
+	srv := New(":0", "http-main", core.URL())
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+
+	payload := buildPayload(0, make([]byte, maxBodyBytes), testUUID)
+	resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}

@@ -32,7 +32,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 **Two internal packages:**
 
 - `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`)
-- `internal/transport/http/httpserver/` — HTTP server with single catch-all POST handler. Contains binary pack/unpack logic and inline sync client.
+- `internal/transport/http/httpserver/` — HTTP server with `GET /healthz` and a catch-all POST handler (1 MiB body cap). Contains binary pack/unpack logic and inline sync client.
 
 **Request flow:**
 
