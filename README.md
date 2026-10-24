@@ -61,7 +61,12 @@ Environment variables:
 
 ## Run with logos-core's dev stack
 
-Join core's compose network and point at its containers:
+Start logos-core (`make services`), put `RABBITMQ_PASSWORD` (core's
+`RABBITMQ_DEFAULT_PASS`) in `.env`, then `docker compose up -d --build`. The
+channel runs as its own stack on host port 8090 (`HTTP_CHANNEL_PORT`) and joins
+the `logos-core_logos` network.
+
+Or with plain `docker run`:
 
 ```bash
 docker run --network logos-core_logos -p 8080:8080 \

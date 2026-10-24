@@ -1,0 +1,38 @@
+# Local development stack for logos-http-channel. Runs as its own compose
+# project and joins logos-core's network to reach core and its RabbitMQ.
+# Start logos-core first (`make services` in logos-core), then:
+#
+#   docker compose up -d --build
+#
+# Set RABBITMQ_PASSWORD (core's RABBITMQ_DEFAULT_PASS) in .env.
+services:
+  http-channel:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: logos-http-channel:dev
+    container_name: logos-http-channel
+    restart: unless-stopped
+    environment:
+      CHANNEL_ID: ${CHANNEL_ID:-http-local}
+      LISTEN_ADDR: ":8080"
+      HEALTH_LISTEN_ADDR: ":8081"
+      LOGOS_SYNC_BASE_URL: ${LOGOS_SYNC_BASE_URL:-http://logos-core-dev:8002}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-1048576}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-logos-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-logos}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+    # Client port only. The health port (8081) stays unpublished: reach it as
+    # http://logos-http-channel:8081/healthz from the logos-core network.
+    ports:
+      - "${HTTP_CHANNEL_PORT:-8090}:8080"
+    networks:
+      - logos
+
+networks:
+  logos:
+    external: true
+    name: logos-core_logos
