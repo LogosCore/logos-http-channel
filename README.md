@@ -27,7 +27,7 @@ Request and response share the same structure:
   `/healthz`), is treated as a minion message.
 - On success: `200` with the packed binary reply (`application/octet-stream`).
 - On any failure (malformed or oversized body, core unreachable, core non-200,
-  invalid core reply): a plain `404 page not found`. The reason is only logged.
+  invalid core reply, draining): a plain `404 page not found`. The reason is only logged.
 
 ## Registration with core
 
@@ -39,6 +39,35 @@ or core is unavailable and deregisters on shutdown. Until it is registered,
 core rejects messages and clients get 404s (the channel logs `core sync returned 403`).
 
 Run each instance with a distinct `CHANNEL_ID`.
+
+## Management
+
+Core can manage the channel from its admin UI. The channel declares a
+management manifest at `module.register` and serves core's management RPC on
+its `rpc_queue` (`logos.channel.rpc.<CHANNEL_ID>`; exclusive and auto-delete,
+consumed before registering, so a second instance with the same `CHANNEL_ID`
+fails to start its session).
+
+Properties (defaults are the env values the process started with):
+
+| Key | Type | Applies | Notes |
+| --- | --- | --- | --- |
+| `max_body_bytes` | bytes | live | 17 to 64 MiB; the core reply limit scales with it |
+| `core_sync_timeout` | duration | live | 1s to 120s, default `30s`; per client request |
+| `log_level` | `info` / `debug` | live | `debug` also logs every request outcome |
+| `logos_sync_base_url` | url | restart | a change is only reported as restart-required |
+
+Actions: `drain` (every request gets a 404 and heartbeats report `draining`),
+`resume`, and `check_core` (POSTs `{}` to the core sync URL and reports
+`reachable`, `status` and `latency_ms`; core's 400 counts as reachable).
+
+Status values, also sent in heartbeat metrics: `requests_total`,
+`succeeded_total`, `failed_total` (every 404), `core_errors_total` (core
+unreachable, non-200 or invalid reply), `rejected_by_core_total` (core 403:
+not registered), `last_core_error`, `last_core_error_at`, `draining`.
+
+Live values are not persisted by the channel: on every (re-)register core sends
+the effective config and the channel applies it.
 
 ## Health check
 

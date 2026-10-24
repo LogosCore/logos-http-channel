@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Module management.** The channel declares a management manifest at
+  registration and serves core's management RPC on its `rpc_queue`
+  (`logos.channel.rpc.<CHANNEL_ID>`, consumed before registering):
+  - Live properties `max_body_bytes`, `core_sync_timeout`, `log_level`; restart-only
+    `logos_sync_base_url` (reported as restart-required). Defaults are the env values.
+  - Actions `drain` (404 for every request, heartbeat status `draining`),
+    `resume`, `check_core` (reachability and latency of the core sync URL).
+  - Status counters `requests_total`, `succeeded_total`, `failed_total`,
+    `core_errors_total`, `rejected_by_core_total`, plus `last_core_error`,
+    `last_core_error_at`, `draining`; also sent in heartbeat metrics.
+- The core sync timeout is now a per-request context timeout (default still
+  30s) instead of a fixed HTTP client timeout.
+- New `log_level=debug` logs every request outcome.
+
 ## v3.1.0
 
 - Registers with core over RabbitMQ (`module.register` / heartbeat /
