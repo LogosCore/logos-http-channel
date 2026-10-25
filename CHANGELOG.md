@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **SDK split.** Builds on `logos-golang-module-core` v0.1.0 (control plane,
+  management, logging) and `logos-golang-channel-core` v3.0.0
+  (`channel.Run` with the connection schema), replacing channel-core v2.
+  Management replies now carry the instance in their source. Otherwise the
+  wire behaviour is unchanged.
+
 ## v3.3.0
 
 - **Minion connection schema.** The channel declares at registration what

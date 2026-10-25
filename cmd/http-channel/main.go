@@ -12,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logging"
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logstream"
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/module"
+	"github.com/logoscore/logos-golang-channel-core/v3/pkg/channel"
+	"github.com/logoscore/logos-golang-module-core/pkg/lifecycle"
+	"github.com/logoscore/logos-golang-module-core/pkg/logging"
+	"github.com/logoscore/logos-golang-module-core/pkg/logstream"
+	"github.com/logoscore/logos-golang-module-core/pkg/module"
 	"github.com/logoscore/logos-http-channel/internal/config"
 	"github.com/logoscore/logos-http-channel/internal/connection"
 	"github.com/logoscore/logos-http-channel/internal/management"
@@ -83,13 +84,15 @@ func main() {
 	go func() {
 		defer close(regDone)
 		connSchema := connection.Schema()
-		mc := module.Config{
-			AMQPURL: cfg.RabbitMQURL,
-			Identity: lifecycle.Identity{
-				ModuleType: "channel",
-				ModuleName: "http",
-				Instance:   cfg.ChannelID,
-				Version:    version,
+		mc := channel.Config{
+			Config: module.Config{
+				AMQPURL: cfg.RabbitMQURL,
+				Identity: lifecycle.Identity{
+					ModuleType: channel.ModuleType,
+					ModuleName: "http",
+					Instance:   cfg.ChannelID,
+					Version:    version,
+				},
 			},
 			Connection: &connSchema,
 		}
@@ -97,7 +100,7 @@ func main() {
 		if mgmtSrv != nil {
 			mc.Management, mc.Logs = mgmtSrv, logs
 		}
-		err := module.Run(regCtx, mc)
+		err := channel.Run(regCtx, mc)
 		if err != nil {
 			log.Fatalf("control plane: %v", err)
 		}

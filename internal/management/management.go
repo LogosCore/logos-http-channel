@@ -2,7 +2,7 @@
 // limit and log level; drain/resume/check_core actions; request counters) and
 // binds it to the client handler. How the channel reaches core (sync URL,
 // timeout) is env-only and deliberately not manageable. Core drives it over the
-// module's rpc_queue via logos-golang-channel-core/v2 pkg/mgmt.
+// module's rpc_queue via logos-golang-module-core pkg/mgmt.
 package management
 
 import (
@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/mgmt"
+	"github.com/logoscore/logos-golang-module-core/pkg/mgmt"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	"github.com/logoscore/logos-http-channel/internal/config"
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logging"
+	"github.com/logoscore/logos-golang-module-core/pkg/logging"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 

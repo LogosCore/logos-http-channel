@@ -139,7 +139,7 @@ nothing is redacted), `core_status` and `core_ms` (when core was called),
 
 Logs (`log/slog`, JSON or text on stderr) can also be tailed live from the module's
 Logs tab in core: the channel declares the `logs` capability and streams
-records only while someone watches (channel-core `pkg/logstream`). A viewer
+records only while someone watches (module-core `pkg/logstream`). A viewer
 may ask for debug records even while `log_level` is `info`; that does not
 change stderr output.
 

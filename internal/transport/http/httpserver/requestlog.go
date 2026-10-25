@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logging"
+	"github.com/logoscore/logos-golang-module-core/pkg/logging"
 )
 
 // Request outcomes, logged as "outcome".

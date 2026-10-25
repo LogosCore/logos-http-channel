@@ -27,16 +27,16 @@ go build -o http-channel ./cmd/http-channel # build binary
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, base64-encoded for the envelope
 - Response uses a random offset so the UUID position varies per response
 
-**Entrypoint:** `cmd/http-channel/main.go` — loads config, builds the handler and its management server, starts the client server, the internal health server and the control-plane session (`channel-core/v2/pkg/module.Run`). On SIGINT/SIGTERM it drains the servers first, then deregisters.
+**Entrypoint:** `cmd/http-channel/main.go` — loads config, builds the handler and its management server, starts the client server, the internal health server and the control-plane session (`channel-core/v3/pkg/channel.Run`, which declares the minion connection schema from `internal/connection`). On SIGINT/SIGTERM it drains the servers first, then deregisters.
 
 **Internal packages:**
 
 - `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `LOG_FORMAT`, `TRUSTED_PROXIES`, `RABBITMQ_*`)
 - `internal/transport/http/httpserver/` — `Handler` is the client handler: bare (no ServeMux, so no redirects), treating every request as a message. It reads `RuntimeConfig` (max body) from an atomic pointer per request, so `SetConfig` applies live; `CoreConfig` (sync URL, timeout) is fixed from env; keeps atomic counters (`Stats`) and a drain flag. `New` wraps it in the client server; `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
 - `internal/connection/` — the minion connection schema declared at registration (`module.Config.Connection`): what minions are given to reach the channel. No transport/method/path parameters — the channel accepts all of them.
-- `internal/management/` — the management manifest (properties, `drain`/`resume`/`check_core` actions, counter status) built from env config, bound to the `Handler` via `logos-golang-channel-core/v2/pkg/mgmt`. Settings for reaching core stay env-only; don't make them manageable.
+- `internal/management/` — the management manifest (properties, `drain`/`resume`/`check_core` actions, counter status) built from env config, bound to the `Handler` via `logos-golang-module-core/pkg/mgmt`. Settings for reaching core stay env-only; don't make them manageable.
 
-Control-plane plumbing (reconnect, register/heartbeat/deregister, serving management on the `rpc_queue`) lives in channel-core `pkg/module`; this repo only declares what is managed. Keep it that way: no lifecycle code here, and no channel-specific behavior pushed into channel-core. Core rejects sync (403 → client 404) from unregistered instances.
+Control-plane plumbing (reconnect, register/heartbeat/deregister, serving management on the `rpc_queue`) lives in module-core `pkg/module` (wrapped by channel-core `pkg/channel`); this repo only declares what is managed. Keep it that way: no lifecycle code here, no channel-specific behavior pushed into channel-core, and nothing channel-specific in module-core. Core rejects sync (403 → client 404) from unregistered instances.
 
 **Request flow:**
 
@@ -48,13 +48,13 @@ Control-plane plumbing (reconnect, register/heartbeat/deregister, serving manage
 6. Pack response: random offset, split encrypted_data, embed raw UUID
 7. Return raw bytes (`application/octet-stream`)
 
-**Logging:** `log/slog` only, built by channel-core `logging.New` (`LOG_FORMAT` json/text on stderr, level from the `log_level` property via a `slog.LevelVar`, teed into `logstream.Hub` for core's live tail). Each request logs exactly one line when it ends (`httpserver/requestlog.go`): served at debug, client mistakes at info, core trouble at warn; all request headers unredacted, never the body or the minion payload fields.
+**Logging:** `log/slog` only, built by module-core `logging.New` (`LOG_FORMAT` json/text on stderr, level from the `log_level` property via a `slog.LevelVar`, teed into `logstream.Hub` for core's live tail). Each request logs exactly one line when it ends (`httpserver/requestlog.go`): served at debug, client mistakes at info, core trouble at warn; all request headers unredacted, never the body or the minion payload fields.
 
 **WebSocket** (`httpserver/websocket.go`): a valid handshake on any path opens a connection whose binary frames are messages in the same packed format; each is relayed through the same `relay` path as a request. Messages of one minion UUID are serialized (a per-UUID queue), different UUIDs run concurrently up to `ws_max_inflight`. The handshake is validated before `websocket.Accept` so a bad one still gets the plain 404; any failure on an open connection closes it with no reason. Connections are hijacked, so `ShutdownWebSockets` (not `http.Server.Shutdown`) closes them; drain closes them too.
 
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
-**External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — control-plane session (`pkg/module`) and management server (`pkg/mgmt`).
+**External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-module-core` — control-plane session (`pkg/module`), management server (`pkg/mgmt`), logging and live log tail; `logos-golang-channel-core/v3` — `pkg/channel.Run` (module session as a channel, with the connection schema).
 
 ## Testing
 
