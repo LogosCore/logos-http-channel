@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,6 +70,7 @@ type Handler struct {
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
+	trusted  atomic.Pointer[[]netip.Prefix]
 
 	requests, succeeded, failed, coreErrors, rejected atomic.Int64
 	lastCoreErr                                       atomic.Pointer[coreError]
@@ -110,6 +112,17 @@ func (h *Handler) SetConfig(cfg RuntimeConfig) {
 // Config returns the current runtime config.
 func (h *Handler) Config() RuntimeConfig { return *h.cfg.Load() }
 
+// SetTrustedProxies sets the peers whose X-Forwarded-For / X-Real-IP is
+// believed for the logged client_ip.
+func (h *Handler) SetTrustedProxies(p []netip.Prefix) { h.trusted.Store(&p) }
+
+func (h *Handler) trustedProxies() []netip.Prefix {
+	if p := h.trusted.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 // SetDraining toggles drain mode: while draining every request gets a 404.
 func (h *Handler) SetDraining(v bool) { h.draining.Store(v) }
 
@@ -138,32 +151,37 @@ func (h *Handler) Stats() Stats {
 	return st
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	cfg := h.cfg.Load()
 	h.requests.Add(1)
-	// Client mistakes log at info, core trouble at warn.
-	fail := func(level slog.Level, stage string, err error) {
+	w := &countingWriter{ResponseWriter: rw}
+	// One line per request, written when it ends. Successful requests log at
+	// debug, client mistakes at info, core trouble at warn.
+	rl := &requestLog{id: protocol.NewULID(), start: time.Now(), level: slog.LevelDebug, msg: "request served", outcome: outcomeOK}
+	defer rl.log(r, w, h.trustedProxies())
+	fail := func(level slog.Level, outcome, stage string, err error) {
 		h.failed.Add(1)
-		slog.Log(r.Context(), level, "request failed", "stage", stage, "err", err, "method", r.Method, "path", r.URL.Path)
+		rl.fail(level, outcome, stage, err)
 		http.NotFound(w, r)
 	}
 
 	if h.draining.Load() {
 		h.failed.Add(1)
-		slog.Debug("request refused: draining", "method", r.Method, "path", r.URL.Path)
+		rl.msg, rl.outcome = "request refused", outcomeDraining
 		http.NotFound(w, r)
 		return
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes))
+	rl.bodyBytes = int64(len(body))
 	if err != nil {
-		fail(slog.LevelInfo, "read body", err)
+		fail(slog.LevelInfo, outcomeBadRequest, "read body", err)
 		return
 	}
 
 	id, encryptedData, err := unpack(body)
 	if err != nil {
-		fail(slog.LevelInfo, "unpack", err)
+		fail(slog.LevelInfo, outcomeBadRequest, "unpack", err)
 		return
 	}
 
@@ -186,16 +204,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
 	maxReplyBytes := 2*cfg.MaxBodyBytes + envelopeOverhead
-	outbound, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound)
+	coreStart := time.Now()
+	outbound, coreStatus, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound, rl.id)
+	rl.coreStatus, rl.coreTime = coreStatus, max(time.Since(coreStart), time.Microsecond)
 	if err != nil {
-		if errors.Is(err, errRejectedByCore) {
+		switch {
+		case errors.Is(err, errRejectedByCore):
 			h.rejected.Add(1)
-		} else if r.Context().Err() == nil {
+			fail(slog.LevelWarn, outcomeRejectedByCore, "core sync", err)
+		case r.Context().Err() != nil:
 			// A client that went away is not a core error.
+			fail(slog.LevelInfo, outcomeClientGone, "core sync", err)
+		default:
 			h.coreErrors.Add(1)
 			h.lastCoreErr.Store(&coreError{msg: err.Error(), at: time.Now().UTC()})
+			fail(slog.LevelWarn, outcomeCoreError, "core sync", err)
 		}
-		fail(slog.LevelWarn, "core sync", err)
 		return
 	}
 
@@ -203,14 +227,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.coreErrors.Add(1)
 		h.lastCoreErr.Store(&coreError{msg: "pack reply: " + err.Error(), at: time.Now().UTC()})
-		fail(slog.LevelWarn, "pack", err)
+		fail(slog.LevelWarn, outcomeCoreError, "pack", err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = w.Write(resp)
 	h.succeeded.Add(1)
-	slog.Debug("request served", "method", r.Method, "path", r.URL.Path, "id", id)
 }
 
 // NewHealth returns the internal health server. It listens on its own port,
@@ -294,34 +317,38 @@ func parseUUID(s string) ([]byte, error) {
 	return hex.DecodeString(clean)
 }
 
-func syncWithCore(ctx context.Context, client *http.Client, syncURL string, maxReplyBytes int64, inbound protocol.InboundMinionMessage) (protocol.OutboundMinionMessage, error) {
+// syncWithCore posts inbound to core and returns its reply and HTTP status
+// (0 when no response arrived). requestID is sent as X-Request-Id so core's
+// logs can be matched with the channel's.
+func syncWithCore(ctx context.Context, client *http.Client, syncURL string, maxReplyBytes int64, inbound protocol.InboundMinionMessage, requestID string) (protocol.OutboundMinionMessage, int, error) {
 	payload, err := json.Marshal(inbound)
 	if err != nil {
-		return protocol.OutboundMinionMessage{}, err
+		return protocol.OutboundMinionMessage{}, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, bytes.NewReader(payload))
 	if err != nil {
-		return protocol.OutboundMinionMessage{}, err
+		return protocol.OutboundMinionMessage{}, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-Id", requestID)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return protocol.OutboundMinionMessage{}, err
+		return protocol.OutboundMinionMessage{}, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusForbidden {
-		return protocol.OutboundMinionMessage{}, errRejectedByCore
+		return protocol.OutboundMinionMessage{}, resp.StatusCode, errRejectedByCore
 	}
 	if resp.StatusCode != http.StatusOK {
-		return protocol.OutboundMinionMessage{}, fmt.Errorf("core sync returned %d", resp.StatusCode)
+		return protocol.OutboundMinionMessage{}, resp.StatusCode, fmt.Errorf("core sync returned %d", resp.StatusCode)
 	}
 
 	var outbound protocol.OutboundMinionMessage
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReplyBytes)).Decode(&outbound); err != nil {
-		return protocol.OutboundMinionMessage{}, err
+		return protocol.OutboundMinionMessage{}, resp.StatusCode, err
 	}
-	return outbound, nil
+	return outbound, resp.StatusCode, nil
 }

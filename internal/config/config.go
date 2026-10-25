@@ -3,9 +3,11 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -21,6 +23,11 @@ type Config struct {
 	CoreSyncTimeout time.Duration
 	// RabbitMQURL is the AMQP URL for registering with core's control plane.
 	RabbitMQURL string
+	// LogFormat is the stderr log format: "json" (default) or "text".
+	LogFormat string
+	// TrustedProxies are the peers whose X-Forwarded-For / X-Real-IP is
+	// believed when logging the client IP.
+	TrustedProxies []netip.Prefix
 }
 
 // minBodyBytes is the smallest valid message: offset byte plus raw UUID.
@@ -67,9 +74,41 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 		Path: "/" + vhost,
 	}).String()
 
+	cfg.LogFormat = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))
+	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
+		return Config{}, fmt.Errorf("LOG_FORMAT must be json or text")
+	}
+
+	proxies, err := parsePrefixes(os.Getenv("TRUSTED_PROXIES"))
+	if err != nil {
+		return Config{}, fmt.Errorf("TRUSTED_PROXIES: %w", err)
+	}
+	cfg.TrustedProxies = proxies
+
 	if cfg.LogosSyncBaseURL == "" {
 		return Config{}, fmt.Errorf("LOGOS_SYNC_BASE_URL is required")
 	}
 
 	return cfg, nil
+}
+
+// parsePrefixes parses a comma-separated list of IPs and CIDRs.
+func parsePrefixes(s string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(f); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(f)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an IP or CIDR", f)
+		}
+		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
 }

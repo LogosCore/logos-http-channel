@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
+	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logging"
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logstream"
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/module"
 	"github.com/logoscore/logos-http-channel/internal/config"
@@ -34,11 +35,15 @@ func main() {
 		log.Fatalf("config load failed: %v", err)
 	}
 
-	// Logs go to stderr at the managed log_level, and to core's live log tail
-	// (which can ask for debug on its own) through the hub.
+	// Logs go to stderr (LOG_FORMAT) at the managed log_level, and to core's
+	// live log tail (which can ask for debug on its own) through the hub.
 	var level slog.LevelVar
 	logs := logstream.New(cfg.ChannelID)
-	slog.SetDefault(slog.New(logs.Handler(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &level}))))
+	logger, err := logging.New(cfg.LogFormat, os.Stderr, &level, logs)
+	if err != nil {
+		log.Fatalf("logging: %v", err)
+	}
+	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -49,6 +54,7 @@ func main() {
 	}, httpserver.RuntimeConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes,
 	})
+	handler.SetTrustedProxies(cfg.TrustedProxies)
 	srv := httpserver.New(cfg.Listen, handler)
 	// Without management (e.g. an env value the manifest rejects) the channel
 	// still serves and registers; core just cannot manage it.
@@ -65,7 +71,8 @@ func main() {
 		}()
 	}
 	slog.Info("logos-http-channel listening", "addr", srv.Addr, "health", health.Addr, "channel_id", cfg.ChannelID,
-		"logos", cfg.LogosSyncBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes)
+		"logos", cfg.LogosSyncBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes,
+		"log_format", cfg.LogFormat, "trusted_proxies", len(cfg.TrustedProxies))
 
 	// The control-plane session outlives ctx: in-flight requests must drain
 	// while core still treats this instance as registered, so it is stopped

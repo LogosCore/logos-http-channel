@@ -31,7 +31,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 
 **Internal packages:**
 
-- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `RABBITMQ_*`)
+- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `LOG_FORMAT`, `TRUSTED_PROXIES`, `RABBITMQ_*`)
 - `internal/transport/http/httpserver/` — `Handler` is the client handler: bare (no ServeMux, so no redirects), treating every request as a message. It reads `RuntimeConfig` (max body, log level) from an atomic pointer per request, so `SetConfig` applies live; `CoreConfig` (sync URL, timeout) is fixed from env; keeps atomic counters (`Stats`) and a drain flag. `New` wraps it in the client server; `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
 - `internal/management/` — the management manifest (properties, `drain`/`resume`/`check_core` actions, counter status) built from env config, bound to the `Handler` via `logos-golang-channel-core/v2/pkg/mgmt`. Settings for reaching core stay env-only; don't make them manageable.
 
@@ -47,7 +47,7 @@ Control-plane plumbing (reconnect, register/heartbeat/deregister, serving manage
 6. Pack response: random offset, split encrypted_data, embed raw UUID
 7. Return raw bytes (`application/octet-stream`)
 
-**Logging:** `log/slog` only (text handler on stderr, level from the `log_level` property via a `slog.LevelVar`), wrapped by channel-core's `logstream.Hub` so core can tail logs live. Client mistakes log at info, core trouble at warn, per-request outcomes at debug.
+**Logging:** `log/slog` only, built by channel-core `logging.New` (`LOG_FORMAT` json/text on stderr, level from the `log_level` property via a `slog.LevelVar`, teed into `logstream.Hub` for core's live tail). Each request logs exactly one line when it ends (`httpserver/requestlog.go`): served at debug, client mistakes at info, core trouble at warn; all request headers unredacted, never the body or the minion payload fields.
 
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 

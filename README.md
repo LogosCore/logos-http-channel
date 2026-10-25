@@ -67,7 +67,24 @@ Status values, also sent in heartbeat metrics: `requests_total`,
 unreachable, non-200 or invalid reply), `rejected_by_core_total` (core 403:
 not registered), `last_core_error`, `last_core_error_at`, `draining`.
 
-Logs (`log/slog`, text on stderr) can also be tailed live from the module's
+## Request log
+
+Every request is logged once, when it ends:
+
+- served: `debug` `request served`
+- client mistake (unreadable or malformed body): `info` `request failed`
+- core trouble (unreachable, non-200, bad reply, 403): `warn` `request failed`
+- refused while drained: `debug` `request refused`
+
+Fields: `request_id` (also sent to core as `X-Request-Id`), `remote_addr`,
+`client_ip`, `proto`, `host`, `method`, `path`, `query`, `content_length`,
+`body_bytes`, `headers.*` (every request header, lowercased, as received —
+nothing is redacted), `core_status` and `core_ms` (when core was called),
+`status`, `response_bytes`, `duration_ms`, `outcome` (`ok`, `draining`,
+`bad_request`, `core_error`, `rejected_by_core`, `client_gone`), and `stage` /
+`err` on failure. The body is never logged.
+
+Logs (`log/slog`, JSON or text on stderr) can also be tailed live from the module's
 Logs tab in core: the channel declares the `logs` capability and streams
 records only while someone watches (channel-core `pkg/logstream`). A viewer
 may ask for debug records even while `log_level` is `info`; that does not
@@ -89,6 +106,8 @@ Environment variables:
 - `LISTEN_ADDR` (default: `:8080`)
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
+- `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
+- `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, minimum 17
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`

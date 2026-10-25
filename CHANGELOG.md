@@ -18,6 +18,12 @@
   `internal/registration` is gone.
 - **Live logs.** Logging moved to `log/slog`; core can tail it from the
   module's Logs tab (`logs` capability, channel-core `pkg/logstream`).
+- **Request log:** one line per request with request id (sent to core as
+  `X-Request-Id`), client address (`client_ip` honours `X-Forwarded-For` /
+  `X-Real-IP` only from `TRUSTED_PROXIES`), method, path, query, sizes, all
+  headers, core status and timing, status, duration and outcome. Served
+  requests stay at debug.
+- New `LOG_FORMAT` env: `json` (default) or `text`.
 - New `CORE_SYNC_TIMEOUT` env (default `30s`): a per-request context timeout
   for core's sync reply, replacing the fixed HTTP client timeout.
 - `log_level` is `debug` / `info` / `warn` / `error` (default `info`):
