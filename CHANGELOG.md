@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.3.0
 
 - **Minion connection schema.** The channel declares at registration what
   minions are given to reach it (`internal/connection`, schema version 2):
