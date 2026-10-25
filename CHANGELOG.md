@@ -5,8 +5,8 @@
 - **Module management.** The channel declares a management manifest at
   registration and serves core's management RPC on its `rpc_queue`
   (`logos.channel.rpc.<CHANNEL_ID>`, consumed before registering):
-  - Live properties `max_body_bytes`, `core_sync_timeout`, `log_level`; restart-only
-    `logos_sync_base_url` (reported as restart-required). Defaults are the env values.
+  - Live properties `max_body_bytes`, `log_level`. Defaults are the env values.
+    How the channel reaches core (sync URL, timeout) is env-only.
   - Actions `drain` (404 for every request; the heartbeat stays `healthy` and
     the `draining` status value shows the pause),
     `resume`, `check_core` (reachability and latency of the core sync URL).
@@ -16,8 +16,8 @@
 - The control-plane session (connect, serve management, register, heartbeat,
   deregister, reconnect with backoff) now runs on channel-core `pkg/module`;
   `internal/registration` is gone.
-- The core sync timeout is now a per-request context timeout (default still
-  30s) instead of a fixed HTTP client timeout.
+- New `CORE_SYNC_TIMEOUT` env (default `30s`): a per-request context timeout
+  for core's sync reply, replacing the fixed HTTP client timeout.
 - New `log_level=debug` logs every request outcome.
 
 ## v3.1.0

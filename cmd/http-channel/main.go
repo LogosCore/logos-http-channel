@@ -34,7 +34,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	handler := httpserver.NewHandler(cfg.ChannelID, cfg.LogosSyncBaseURL, httpserver.RuntimeConfig{
+	handler := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{
+		SyncBaseURL: cfg.LogosSyncBaseURL,
+		SyncTimeout: cfg.CoreSyncTimeout,
+	}, httpserver.RuntimeConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes,
 	})
 	srv := httpserver.New(cfg.Listen, handler)
@@ -52,8 +55,8 @@ func main() {
 			}
 		}()
 	}
-	log.Printf("logos-http-channel listening on %s, health on %s (channel_id=%s, logos=%s, max_body=%d)",
-		srv.Addr, health.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.MaxBodyBytes)
+	log.Printf("logos-http-channel listening on %s, health on %s (channel_id=%s, logos=%s, core_sync_timeout=%s, max_body=%d)",
+		srv.Addr, health.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.CoreSyncTimeout, cfg.MaxBodyBytes)
 
 	// The control-plane session outlives ctx: in-flight requests must drain
 	// while core still treats this instance as registered, so it is stopped

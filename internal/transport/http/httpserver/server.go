@@ -30,13 +30,18 @@ const (
 	LogDebug = "debug" // also log every request outcome
 )
 
+// CoreConfig is how the handler reaches core. It comes from the env only and
+// is fixed for the process lifetime.
+type CoreConfig struct {
+	SyncBaseURL string
+	// SyncTimeout bounds each request's wait for core's reply (default 30s).
+	SyncTimeout time.Duration
+}
+
 // RuntimeConfig holds the settings core can change live via management.
 type RuntimeConfig struct {
-	// SyncURL is core's sync endpoint (see SyncURL). Empty keeps the current one.
-	SyncURL         string
-	MaxBodyBytes    int64
-	CoreSyncTimeout time.Duration
-	LogLevel        string
+	MaxBodyBytes int64
+	LogLevel     string
 }
 
 // Stats is a snapshot of the handler's counters.
@@ -64,8 +69,10 @@ var errRejectedByCore = errors.New("core sync returned 403")
 // handler, not a ServeMux: the mux answers unclean paths with redirects, and
 // every response here must be either the reply or a 404.
 type Handler struct {
-	channelID string
-	client    *http.Client
+	channelID   string
+	client      *http.Client
+	syncURL     string
+	syncTimeout time.Duration
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
@@ -74,15 +81,17 @@ type Handler struct {
 	lastCoreErr                                       atomic.Pointer[coreError]
 }
 
-// NewHandler returns a handler forwarding to {syncBaseURL}/api/channel/sync.
-func NewHandler(channelID, syncBaseURL string, cfg RuntimeConfig) *Handler {
+// NewHandler returns a handler forwarding to {core.SyncBaseURL}/api/channel/sync.
+func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
+	if core.SyncTimeout <= 0 {
+		core.SyncTimeout = 30 * time.Second
+	}
 	h := &Handler{
 		channelID: channelID,
-		// Timeouts are per request (RuntimeConfig.CoreSyncTimeout).
-		client: &http.Client{},
-	}
-	if cfg.SyncURL == "" {
-		cfg.SyncURL = SyncURL(syncBaseURL)
+		// Timeouts are per request (syncTimeout).
+		client:      &http.Client{},
+		syncURL:     SyncURL(core.SyncBaseURL),
+		syncTimeout: core.SyncTimeout,
 	}
 	h.SetConfig(cfg)
 	return h
@@ -102,16 +111,8 @@ func New(addr string, h *Handler) *http.Server {
 
 // SetConfig replaces the runtime config used by subsequent requests.
 func (h *Handler) SetConfig(cfg RuntimeConfig) {
-	if cfg.CoreSyncTimeout <= 0 {
-		cfg.CoreSyncTimeout = 30 * time.Second
-	}
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = LogInfo
-	}
-	if cfg.SyncURL == "" {
-		if prev := h.cfg.Load(); prev != nil {
-			cfg.SyncURL = prev.SyncURL
-		}
 	}
 	h.cfg.Store(&cfg)
 }
@@ -126,7 +127,7 @@ func (h *Handler) SetDraining(v bool) { h.draining.Store(v) }
 func (h *Handler) Draining() bool { return h.draining.Load() }
 
 // SyncEndpoint returns the core sync URL requests are forwarded to.
-func (h *Handler) SyncEndpoint() string { return h.cfg.Load().SyncURL }
+func (h *Handler) SyncEndpoint() string { return h.syncURL }
 
 // Client returns the HTTP client used for core calls.
 func (h *Handler) Client() *http.Client { return h.client }
@@ -192,11 +193,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EncryptedData: encryptedData,
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), cfg.CoreSyncTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.syncTimeout)
 	defer cancel()
 	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
 	maxReplyBytes := 2*cfg.MaxBodyBytes + envelopeOverhead
-	outbound, err := syncWithCore(ctx, h.client, cfg.SyncURL, maxReplyBytes, inbound)
+	outbound, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound)
 	if err != nil {
 		if errors.Is(err, errRejectedByCore) {
 			h.rejected.Add(1)

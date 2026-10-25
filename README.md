@@ -53,9 +53,10 @@ Properties (defaults are the env values the process started with):
 | Key | Type | Applies | Notes |
 | --- | --- | --- | --- |
 | `max_body_bytes` | bytes | live | 17 to 64 MiB; the core reply limit scales with it |
-| `core_sync_timeout` | duration | live | 1s to 120s, default `30s`; per client request |
 | `log_level` | `info` / `debug` | live | `debug` also logs every request outcome |
-| `logos_sync_base_url` | url | restart | a change is only reported as restart-required |
+
+How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
+env-only and not manageable from core.
 
 Actions: `drain` (every request gets a 404 until `resume`; shown in the `draining` status value, heartbeat health stays `healthy`),
 `resume`, and `check_core` (POSTs `{}` to the core sync URL and reports
@@ -81,6 +82,7 @@ Environment variables:
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`)
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
+- `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, minimum 17
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`

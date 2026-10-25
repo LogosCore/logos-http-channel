@@ -149,7 +149,7 @@ func TestIntegration_PostSync(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -194,7 +194,7 @@ func TestAnyMethod_Works(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -219,7 +219,7 @@ func TestAnyPath_Works(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -242,7 +242,7 @@ func TestEmptyBody_NotFound(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -261,7 +261,7 @@ func TestOversizedBody_NotFound(t *testing.T) {
 	defer core.Close()
 
 	const limit = 64
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: limit}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: limit}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
@@ -297,7 +297,7 @@ func TestCoreFailure_NotFound(t *testing.T) {
 	defer garbage.Close()
 
 	for name, coreURL := range map[string]string{"core 500": failing.URL, "bad reply": garbage.URL, "core down": downURL} {
-		srv := New(":0", NewHandler("http-main", coreURL, RuntimeConfig{MaxBodyBytes: testMaxBody}))
+		srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: coreURL}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 		ts := httptest.NewServer(srv.Handler)
 		resp, err := http.Post(ts.URL+"/test", "application/octet-stream", bytes.NewReader(buildPayload(2, []byte("test"), testUUID)))
 		if err != nil {
@@ -326,7 +326,7 @@ func TestHealthz_PublicServerTreatsAsMessage(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
 
-	srv := New(":0", NewHandler("http-main", core.URL(), RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	srv := New(":0", NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 

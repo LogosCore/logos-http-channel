@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"testing"
-	"time"
 
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	"github.com/logoscore/logos-http-channel/internal/config"
@@ -24,8 +22,14 @@ func TestManifestValid(t *testing.T) {
 	if err := protocol.ValidateManifest(m); err != nil {
 		t.Fatalf("ValidateManifest: %v", err)
 	}
-	if m.Properties[0].Default != int64(1<<20) || m.Properties[3].Default != "http://core:8002" {
-		t.Errorf("defaults not taken from env config: %+v", m.Properties)
+	if m.Properties[0].Default != int64(1<<20) {
+		t.Errorf("default not taken from env config: %+v", m.Properties)
+	}
+	// How the channel reaches core is env-only.
+	for _, p := range m.Properties {
+		if p.Key == "core_sync_timeout" || p.Key == "logos_sync_base_url" {
+			t.Errorf("core connection setting %q is manageable", p.Key)
+		}
 	}
 	// An env body cap above the declared max still yields a valid manifest.
 	big := testConfig("http://core:8002")
@@ -38,7 +42,7 @@ func TestManifestValid(t *testing.T) {
 func newServer(t *testing.T, syncBaseURL string) (*httpserver.Handler, func(protocol.Envelope) protocol.ReplyEnvelope) {
 	t.Helper()
 	cfg := testConfig(syncBaseURL)
-	h := httpserver.NewHandler(cfg.ChannelID, cfg.LogosSyncBaseURL, httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes})
+	h := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{SyncBaseURL: cfg.LogosSyncBaseURL}, httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes})
 	s, err := New(cfg, h)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -53,55 +57,34 @@ func envelope(t *testing.T, typ string, payload any) protocol.Envelope {
 	return protocol.Envelope{MessageID: id, CorrelationID: id, Type: typ, Version: protocol.EnvelopeVersionV1, Payload: raw}
 }
 
-func TestStartupApplyAdoptsSyncURL(t *testing.T) {
-	h, handle := newServer(t, "http://core:8002")
-	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
-		ManagementConfig: protocol.ManagementConfig{Revision: 1, Values: map[string]any{
-			"logos_sync_base_url": "http://elsewhere:9000",
-		}},
-	}))
-	var out protocol.ConfigApplyReply
-	if err := json.Unmarshal(rep.Payload, &out); err != nil || len(out.RestartRequired) != 0 {
-		t.Fatalf("reply = %+v (%v)", rep, err)
-	}
-	if h.SyncEndpoint() != "http://elsewhere:9000/api/channel/sync" {
-		t.Errorf("startup apply did not adopt the sync URL: %s", h.SyncEndpoint())
-	}
-}
-
 func TestApplyUpdatesHandlerLive(t *testing.T) {
 	h, handle := newServer(t, "http://core:8002")
 	// The startup apply (register reply), with nothing managed yet.
 	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{}))
 	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
 		ManagementConfig: protocol.ManagementConfig{Revision: 1, Values: map[string]any{
-			"max_body_bytes":      4096,
-			"core_sync_timeout":   "5s",
-			"log_level":           "debug",
-			"logos_sync_base_url": "http://elsewhere:9000",
+			"max_body_bytes": 4096,
+			"log_level":      "debug",
 		}},
 	}))
 	var out protocol.ConfigApplyReply
 	if err := json.Unmarshal(rep.Payload, &out); err != nil || rep.Status != protocol.StatusOK {
 		t.Fatalf("reply = %+v (%v)", rep, err)
 	}
-	if !slices.Equal(out.RestartRequired, []string{"logos_sync_base_url"}) || len(out.Rejected) != 0 {
+	if len(out.RestartRequired) != 0 || len(out.Rejected) != 0 {
 		t.Errorf("reply = %+v", out)
 	}
-	want := httpserver.RuntimeConfig{SyncURL: "http://core:8002/api/channel/sync", MaxBodyBytes: 4096, CoreSyncTimeout: 5 * time.Second, LogLevel: "debug"}
+	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096, LogLevel: "debug"}
 	if got := h.Config(); got != want {
 		t.Errorf("config = %+v, want %+v", got, want)
-	}
-	if h.SyncEndpoint() != "http://core:8002/api/channel/sync" {
-		t.Errorf("sync URL changed live: %s", h.SyncEndpoint())
 	}
 
 	// Out-of-range values are rejected and the previous value kept.
 	rep = handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
-		ManagementConfig: protocol.ManagementConfig{Revision: 2, Values: map[string]any{"max_body_bytes": 5, "core_sync_timeout": "5m"}},
+		ManagementConfig: protocol.ManagementConfig{Revision: 2, Values: map[string]any{"max_body_bytes": 5, "log_level": "trace"}},
 	}))
 	_ = json.Unmarshal(rep.Payload, &out)
-	if len(out.Rejected) != 2 || h.Config().MaxBodyBytes != 4096 || h.Config().CoreSyncTimeout != 5*time.Second {
+	if len(out.Rejected) != 2 || h.Config().MaxBodyBytes != 4096 || h.Config().LogLevel != "debug" {
 		t.Errorf("rejected = %+v config = %+v", out.Rejected, h.Config())
 	}
 }

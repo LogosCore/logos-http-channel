@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -16,6 +17,8 @@ type Config struct {
 	LogosSyncBaseURL string
 	HealthListen     string
 	MaxBodyBytes     int64
+	// CoreSyncTimeout bounds each client request's wait for core's sync reply.
+	CoreSyncTimeout time.Duration
 	// RabbitMQURL is the AMQP URL for registering with core's control plane.
 	RabbitMQURL string
 }
@@ -47,6 +50,12 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 		return Config{}, fmt.Errorf("MAX_BODY_BYTES must be an integer >= %d", minBodyBytes)
 	}
 	cfg.MaxBodyBytes = maxBody
+
+	timeout, err := time.ParseDuration(envOrDefault("CORE_SYNC_TIMEOUT", "30s"))
+	if err != nil || timeout <= 0 {
+		return Config{}, fmt.Errorf("CORE_SYNC_TIMEOUT must be a positive duration (e.g. 30s)")
+	}
+	cfg.CoreSyncTimeout = timeout
 
 	vhost := envOrDefault("RABBITMQ_VHOST", "/")
 	cfg.RabbitMQURL = (&url.URL{

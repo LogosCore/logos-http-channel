@@ -1,6 +1,7 @@
-// Package management declares what core may manage on this channel (live
-// limits, timeouts and log level; drain/resume/check_core actions; request
-// counters) and binds it to the client handler. Core drives it over the
+// Package management declares what core may manage on this channel (body
+// limit and log level; drain/resume/check_core actions; request counters) and
+// binds it to the client handler. How the channel reaches core (sync URL,
+// timeout) is env-only and deliberately not manageable. Core drives it over the
 // module's rpc_queue via logos-golang-channel-core/v2 pkg/mgmt.
 package management
 
@@ -21,9 +22,8 @@ import (
 
 // Property bounds.
 const (
-	minBodyBytes   = 17       // offset byte plus raw UUID
-	maxBodyBytes   = 64 << 20 // 64 MiB
-	defaultTimeout = "30s"
+	minBodyBytes = 17       // offset byte plus raw UUID
+	maxBodyBytes = 64 << 20 // 64 MiB
 )
 
 // Manifest builds the management manifest. Each property's default is the
@@ -41,24 +41,12 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Default: cfg.MaxBodyBytes, Min: minBodyBytes, Max: bodyMax,
 			}, Apply: protocol.ApplyLive},
 			{FieldSpec: protocol.FieldSpec{
-				Key: "core_sync_timeout", Type: protocol.FieldDuration, Label: "Core sync timeout",
-				Description: "How long a client request waits for core's sync reply.",
-				Group:       "Core", Order: 2,
-				Default: defaultTimeout, Min: "1s", Max: "120s",
-			}, Apply: protocol.ApplyLive},
-			{FieldSpec: protocol.FieldSpec{
 				Key: "log_level", Type: protocol.FieldEnum, Label: "Log level",
 				Description: "info logs failures only; debug also logs every request outcome.",
-				Group:       "Logging", Order: 3,
+				Group:       "Logging", Order: 2,
 				Default: httpserver.LogInfo,
 				Options: []protocol.EnumOption{{Value: httpserver.LogInfo, Label: "Info"}, {Value: httpserver.LogDebug, Label: "Debug"}},
 			}, Apply: protocol.ApplyLive},
-			{FieldSpec: protocol.FieldSpec{
-				Key: "logos_sync_base_url", Type: protocol.FieldURL, Label: "Core sync base URL",
-				Description: "Base URL of core's /api/channel/sync endpoint. Changing it requires a restart.",
-				Group:       "Core", Order: 4,
-				Default: cfg.LogosSyncBaseURL,
-			}, Apply: protocol.ApplyRestart},
 		},
 		Actions: []protocol.ActionSpec{
 			{
@@ -122,26 +110,15 @@ func apply(ctx context.Context, h *httpserver.Handler, live map[string]any) erro
 	if n, ok := protocol.AsInt64(live["max_body_bytes"]); ok {
 		next.MaxBodyBytes = n
 	}
-	if v := live["core_sync_timeout"]; v != nil {
-		d, err := protocol.ParseDuration(v)
-		if err != nil {
-			return fmt.Errorf("core_sync_timeout: %w", err)
-		}
-		next.CoreSyncTimeout = d
-	}
 	if lvl, ok := live["log_level"].(string); ok {
 		next.LogLevel = lvl
-	}
-	// Restart-mode: only present here in the startup apply (see mgmt.Server).
-	if u, ok := live["logos_sync_base_url"].(string); ok && u != "" {
-		next.SyncURL = httpserver.SyncURL(u)
 	}
 	if next == prev {
 		return nil
 	}
 	h.SetConfig(next)
-	log.Printf("management: config applied by %s (max_body=%d core_sync_timeout=%s log_level=%s sync_url=%s)",
-		actorName(mgmt.ActorFromContext(ctx)), next.MaxBodyBytes, next.CoreSyncTimeout, next.LogLevel, next.SyncURL)
+	log.Printf("management: config applied by %s (max_body=%d log_level=%s)",
+		actorName(mgmt.ActorFromContext(ctx)), next.MaxBodyBytes, next.LogLevel)
 	return nil
 }
 
