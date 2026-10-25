@@ -49,7 +49,7 @@ func TestLoadFromEnv_MaxBodyBytes(t *testing.T) {
 }
 
 func TestLoadFromEnv_InvalidMaxBodyBytes(t *testing.T) {
-	for _, v := range []string{"abc", "-1", "16"} {
+	for _, v := range []string{"abc", "-1", "16", "1073741825"} {
 		t.Setenv("MAX_BODY_BYTES", v)
 		if _, err := LoadFromEnv(""); err == nil {
 			t.Fatalf("MAX_BODY_BYTES=%s: expected error", v)

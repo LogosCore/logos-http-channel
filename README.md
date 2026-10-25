@@ -52,7 +52,7 @@ Properties (defaults are the env values the process started with):
 
 | Key | Type | Applies | Notes |
 | --- | --- | --- | --- |
-| `max_body_bytes` | bytes | live | 17 to 64 MiB; the core reply limit scales with it |
+| `max_body_bytes` | bytes | live | 17 to 64 MiB (or up to the env value, if that is larger); the core reply limit scales with it |
 | `log_level` | `debug` / `info` / `warn` / `error` | live | stderr level, default `info`: `debug` adds every request outcome, `info` client errors, startup and management changes, `warn` core problems only |
 
 How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
@@ -73,6 +73,7 @@ Every request is logged once, when it ends:
 
 - served: `debug` `request served`
 - client mistake (unreadable or malformed body): `info` `request failed`
+- client left while core was answering: `info` `request failed`
 - core trouble (unreachable, non-200, bad reply, 403): `warn` `request failed`
 - refused while drained: `debug` `request refused`
 
@@ -109,7 +110,7 @@ Environment variables:
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
 - `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server
-- `MAX_BODY_BYTES` (default: `1048576`) — max client request body, minimum 17
+- `MAX_BODY_BYTES` (default: `1048576`) — max client request body, 17 to 1 GiB
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`
   (defaults: `localhost` / `5672` / `guest` / `guest` / `/`) — core's control-plane broker
 

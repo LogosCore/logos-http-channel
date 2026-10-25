@@ -14,6 +14,9 @@ services:
     image: logos-http-channel:dev
     container_name: logos-http-channel
     restart: unless-stopped
+    # Above CORE_SYNC_TIMEOUT + 5s: in-flight requests drain, then the channel
+    # deregisters. Docker's default 10s would kill it mid-drain.
+    stop_grace_period: 40s
     environment:
       CHANNEL_ID: ${CHANNEL_ID:-http-local}
       LISTEN_ADDR: ":8080"

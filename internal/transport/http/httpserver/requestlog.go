@@ -42,8 +42,13 @@ func (l *requestLog) fail(level slog.Level, outcome, stage string, err error) {
 	l.level, l.msg, l.outcome, l.stage, l.err = level, "request failed", outcome, stage, err
 }
 
-// log writes the request line. The body itself is never logged.
+// log writes the request line. The body itself is never logged. Nothing is
+// built when the line would be dropped (served requests at the default info
+// level); the hub's Enabled already counts a viewer asking for debug.
 func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Prefix) {
+	if !slog.Default().Enabled(r.Context(), l.level) {
+		return
+	}
 	attrs := []slog.Attr{
 		slog.String("request_id", l.id),
 		slog.String("remote_addr", r.RemoteAddr),
@@ -55,7 +60,6 @@ func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Pre
 		slog.String("query", r.URL.RawQuery),
 		slog.Int64("content_length", r.ContentLength),
 		slog.Int64("body_bytes", l.bodyBytes),
-		logging.Headers(r.Header),
 	}
 	if l.coreTime > 0 {
 		attrs = append(attrs, slog.Int("core_status", l.coreStatus), slog.Float64("core_ms", ms(l.coreTime)))
@@ -72,6 +76,9 @@ func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Pre
 	if l.err != nil {
 		attrs = append(attrs, slog.String("err", l.err.Error()))
 	}
+	// Last, so a request with very many headers cannot push the fields above
+	// out of the live tail's attr budget.
+	attrs = append(attrs, logging.Headers(r.Header))
 	slog.LogAttrs(r.Context(), l.level, l.msg, attrs...)
 }
 
@@ -95,19 +102,39 @@ func clientIP(r *http.Request, trusted []netip.Prefix) string {
 		hops := strings.Split(strings.Join(xff, ","), ",")
 		for i := len(hops) - 1; i >= 0; i-- {
 			hop := strings.TrimSpace(hops[i])
-			a, err := netip.ParseAddr(hop)
-			if err != nil {
+			if hop == "" {
+				continue
+			}
+			a, ok := parseHop(hop)
+			if !ok {
 				return hop // not an address; report what the proxy said
 			}
 			if !isTrusted(a, trusted) {
 				return a.String()
 			}
 		}
+		// Every hop is a trusted proxy: the leftmost is the closest we know.
+		if a, ok := parseHop(strings.TrimSpace(hops[0])); ok {
+			return a.String()
+		}
+		return host
 	}
-	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
-		return real
+	if a, ok := parseHop(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ok {
+		return a.String()
 	}
 	return host
+}
+
+// parseHop reads an address as proxies write it: bare, or with a port
+// ("1.2.3.4:5", "[::1]:5").
+func parseHop(s string) (netip.Addr, bool) {
+	if a, err := netip.ParseAddr(s); err == nil {
+		return a.Unmap(), true
+	}
+	if ap, err := netip.ParseAddrPort(s); err == nil {
+		return ap.Addr().Unmap(), true
+	}
+	return netip.Addr{}, false
 }
 
 func isTrusted(a netip.Addr, trusted []netip.Prefix) bool {

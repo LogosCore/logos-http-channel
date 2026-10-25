@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -88,7 +89,7 @@ func TestRequestLogServed(t *testing.T) {
 		"level": "DEBUG", "msg": "request served", "outcome": "ok",
 		"method": "PUT", "path": "/upload/x", "query": "a=1&b=2", "proto": "HTTP/1.1",
 		"status": float64(200), "core_status": float64(200),
-		"body_bytes": float64(len(buildPayload(3, []byte("abcdef"), testUUID))),
+		"body_bytes":     float64(len(buildPayload(3, []byte("abcdef"), testUUID))),
 		"response_bytes": float64(len(respBody)), "client_ip": "127.0.0.1",
 	} {
 		if rec[k] != want {
@@ -169,6 +170,11 @@ func TestClientIP(t *testing.T) {
 		{"trusted peer, real ip", "10.0.0.2:4000", "", "198.51.100.1", "198.51.100.1"},
 		{"trusted peer, no headers", "10.0.0.2:4000", "", "", "10.0.0.2"},
 		{"ipv6 peer", "[2001:db8::1]:4000", "", "", "2001:db8::1"},
+		{"hop with port", "10.0.0.2:4000", "198.51.100.9:5555", "", "198.51.100.9"},
+		{"empty hops skipped", "10.0.0.2:4000", "198.51.100.9, ,", "", "198.51.100.9"},
+		{"all hops trusted", "10.0.0.2:4000", "10.0.0.5, 10.0.0.7", "", "10.0.0.5"},
+		{"real ip ignored when xff present", "10.0.0.2:4000", "198.51.100.9", "6.6.6.6", "198.51.100.9"},
+		{"unparsable real ip", "10.0.0.2:4000", "", "nonsense", "10.0.0.2"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -182,5 +188,32 @@ func TestClientIP(t *testing.T) {
 		if got := clientIP(r, trusted); got != c.want {
 			t.Errorf("%s: client_ip = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestRequestLogSkippedWhenDisabled(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	core := newTestLogosCore(t)
+	defer core.Close()
+	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	defer ts.Close()
+	post(t, ts.URL, buildPayload(2, []byte("abcd"), testUUID)).Body.Close()
+	if buf.Len() != 0 {
+		t.Errorf("served request logged at info level: %s", buf.String())
+	}
+}
+
+func TestUnpackInPlace(t *testing.T) {
+	body := buildPayload(3, []byte("abcdef"), testUUID) // "abc" before the UUID, "def" after
+	id, enc, err := unpack(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(enc)
+	if string(raw) != "abcdef" || id != formatUUID(testUUID) {
+		t.Errorf("unpack = %q %q", id, raw)
 	}
 }

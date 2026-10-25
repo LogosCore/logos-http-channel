@@ -101,7 +101,21 @@ func SyncURL(syncBaseURL string) string {
 // method or path, is treated as a minion message; any failure answers with a
 // plain 404.
 func New(addr string, h *Handler) *http.Server {
-	return &http.Server{Addr: addr, Handler: h}
+	// ReadHeaderTimeout keeps slow-header clients from holding connections;
+	// it closes the connection without a response, so the 404 rule holds.
+	return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+}
+
+// readBody reads at most limit bytes, sized up front from Content-Length
+// when that is known and within the limit (no doubling reallocations).
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	rd := http.MaxBytesReader(w, r.Body, limit)
+	if r.ContentLength <= 0 || r.ContentLength > limit {
+		return io.ReadAll(rd)
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, r.ContentLength+1)) // +1: EOF read without growing
+	_, err := buf.ReadFrom(rd)
+	return buf.Bytes(), err
 }
 
 // SetConfig replaces the runtime config used by subsequent requests.
@@ -172,7 +186,9 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes))
+	// The raw writer: MaxBytesReader marks it so net/http closes the
+	// connection after an oversized body.
+	body, err := readBody(rw, r, cfg.MaxBodyBytes)
 	rl.bodyBytes = int64(len(body))
 	if err != nil {
 		fail(slog.LevelInfo, outcomeBadRequest, "read body", err)
@@ -186,7 +202,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	inbound := protocol.InboundMinionMessage{
-		MessageID: fmt.Sprintf("%s-%d", h.channelID, time.Now().UnixNano()),
+		MessageID: rl.id,
 		Type:      protocol.TypeInboundMinionMessage,
 		Version:   protocol.VersionV1,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -247,6 +263,7 @@ func NewHealth(addr string) *http.Server {
 }
 
 // unpack parses: [offset:1][enc_part1:offset][id:16][enc_part2:rest]
+// It reuses body's memory, so body is garbage afterwards.
 func unpack(body []byte) (id string, encryptedData string, err error) {
 	if len(body) < 1+uuidLen {
 		return "", "", fmt.Errorf("body too short: need at least %d bytes", 1+uuidLen)
@@ -257,15 +274,14 @@ func unpack(body []byte) (id string, encryptedData string, err error) {
 		return "", "", fmt.Errorf("invalid offset %d for body length %d", offset, len(body))
 	}
 
-	encPart1 := body[1 : 1+offset]
 	rawID := body[1+offset : 1+offset+uuidLen]
 	encPart2 := body[1+offset+uuidLen:]
 
 	id = formatUUID(rawID)
 
-	enc := make([]byte, 0, len(encPart1)+len(encPart2))
-	enc = append(enc, encPart1...)
-	enc = append(enc, encPart2...)
+	// Join the two parts in place over the UUID (already formatted) rather
+	// than copying the payload once more.
+	enc := append(body[1:1+offset], encPart2...)
 	if len(enc) > 0 {
 		encryptedData = base64.StdEncoding.EncodeToString(enc)
 	}

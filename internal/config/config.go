@@ -30,8 +30,13 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 }
 
-// minBodyBytes is the smallest valid message: offset byte plus raw UUID.
-const minBodyBytes = 17
+// Body size bounds: the smallest valid message (offset byte plus raw UUID),
+// and a ceiling that keeps the reply limit (2× plus overhead) far from
+// overflowing and a single request's memory sane.
+const (
+	minBodyBytes = 17
+	maxBodyBytes = 1 << 30
+)
 
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -53,8 +58,8 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 	}
 
 	maxBody, err := strconv.ParseInt(envOrDefault("MAX_BODY_BYTES", "1048576"), 10, 64)
-	if err != nil || maxBody < minBodyBytes {
-		return Config{}, fmt.Errorf("MAX_BODY_BYTES must be an integer >= %d", minBodyBytes)
+	if err != nil || maxBody < minBodyBytes || maxBody > maxBodyBytes {
+		return Config{}, fmt.Errorf("MAX_BODY_BYTES must be an integer from %d to %d", minBodyBytes, int64(maxBodyBytes))
 	}
 	cfg.MaxBodyBytes = maxBody
 

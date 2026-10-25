@@ -24,6 +24,8 @@
   headers, core status and timing, status, duration and outcome. Served
   requests stay at debug.
 - New `LOG_FORMAT` env: `json` (default) or `text`.
+- `MAX_BODY_BYTES` is capped at 1 GiB. Shutdown drains for
+  `CORE_SYNC_TIMEOUT` + 5s; compose sets `stop_grace_period: 40s`.
 - New `CORE_SYNC_TIMEOUT` env (default `30s`): a per-request context timeout
   for core's sync reply, replacing the fixed HTTP client timeout.
 - `log_level` is `debug` / `info` / `warn` / `error` (default `info`):

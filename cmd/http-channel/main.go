@@ -102,7 +102,9 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Long enough for a request waiting on core to finish; keep the
+	// container's stop grace period above it (docker-compose.yml).
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.CoreSyncTimeout+5*time.Second)
 	defer cancel()
 	for _, s := range []*http.Server{srv, health} {
 		if err := s.Shutdown(shutdownCtx); err != nil {
