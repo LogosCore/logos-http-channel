@@ -73,7 +73,7 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 		Properties: []protocol.PropertySpec{
 			{FieldSpec: protocol.FieldSpec{
 				Key: "max_body_bytes", Type: protocol.FieldBytes, Label: "Max request body",
-				Description: "Largest accepted client request body. The core reply limit scales with it.",
+				Description: "Largest accepted request body or WebSocket message. Minions choose their own message size, so lowering it can break minions already deployed: watch Too large.",
 				Group:       "Limits", Order: 1, Unit: "bytes",
 				Default: cfg.MaxBodyBytes, Min: minBodyBytes, Max: bodyMax,
 			}, Apply: protocol.ApplyLive},
@@ -138,6 +138,8 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Description: "Each one closed its connection."},
 			{Key: "core_errors_total", Type: protocol.FieldInt, Label: "Core errors",
 				Description: "Core unreachable, non-200, or invalid reply (both transports)."},
+			{Key: "too_large_total", Type: protocol.FieldInt, Label: "Too large",
+				Description: "Requests and WebSocket messages over the max request body (both transports). Minions sending them fail until the limit is raised."},
 			{Key: "rejected_by_core_total", Type: protocol.FieldInt, Label: "Rejected by core",
 				Description: "Core answered 403: this instance was not registered."},
 			{Key: "last_core_error", Type: protocol.FieldString, Label: "Last core error"},
@@ -230,6 +232,7 @@ func status(h *httpserver.Handler) map[string]any {
 		"failed_total":           st.FailedTotal,
 		"core_errors_total":      st.CoreErrorsTotal,
 		"rejected_by_core_total": st.RejectedByCore,
+		"too_large_total":        st.TooLargeTotal,
 		"draining":               st.Draining,
 
 		"ws_connections_open":      st.WSConnectionsOpen,

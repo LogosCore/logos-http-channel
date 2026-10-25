@@ -46,6 +46,7 @@ type Stats struct {
 	FailedTotal     int64 // every 404 returned
 	CoreErrorsTotal int64 // core unreachable, non-200, or bad reply
 	RejectedByCore  int64 // core answered 403: instance not registered
+	TooLargeTotal   int64 // bodies and frames over max_body_bytes (HTTP and WebSocket)
 	LastCoreError   string
 	LastCoreErrorAt time.Time
 	Draining        bool
@@ -78,8 +79,8 @@ type Handler struct {
 	draining atomic.Bool
 	trusted  atomic.Pointer[[]netip.Prefix]
 
-	requests, succeeded, failed, coreErrors, rejected atomic.Int64
-	lastCoreErr                                       atomic.Pointer[coreError]
+	requests, succeeded, failed, coreErrors, rejected, tooLarge atomic.Int64
+	lastCoreErr                                                 atomic.Pointer[coreError]
 
 	ws wsState
 }
@@ -172,6 +173,7 @@ func (h *Handler) Stats() Stats {
 		FailedTotal:     h.failed.Load(),
 		CoreErrorsTotal: h.coreErrors.Load(),
 		RejectedByCore:  h.rejected.Load(),
+		TooLargeTotal:   h.tooLarge.Load(),
 		Draining:        h.draining.Load(),
 
 		WSConnectionsOpen:  h.ws.open.Load(),
@@ -218,6 +220,14 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	body, err := readBody(rw, r, cfg.MaxBodyBytes)
 	rl.bodyBytes = int64(len(body))
 	if err != nil {
+		// Too large is no client mistake to shrug off: a minion built for a
+		// bigger limit keeps failing until max_body_bytes is raised again.
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.tooLarge.Add(1)
+			fail(slog.LevelWarn, outcomeTooLarge, "read body", err)
+			return
+		}
 		fail(slog.LevelInfo, outcomeBadRequest, "read body", err)
 		return
 	}

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Minion connection schema.** The channel declares at registration what
+  minions are given to reach it (`internal/connection`, schema version 2):
+  `base_url` (scheme, host and optional port; no path), `host_header`, `sni`,
+  `proxy`, `tls_verify` (default off), `tls_pin_sha256`, `user_agent`,
+  `headers` (a name → value map), `request_timeout`,
+  `checkin_interval`, `checkin_jitter`, `ws_reconnect_backoff`.
+- **`too_large`.** A request body or WebSocket message over `max_body_bytes`
+  now logs at warn with outcome `too_large` (was `bad_request` at info) and
+  counts in the new `too_large_total` status value.
+
 ## v3.2.0
 
 - **WebSocket.** Minions may keep a WebSocket open (valid handshake on any

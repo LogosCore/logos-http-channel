@@ -98,8 +98,24 @@ Status values, also sent in heartbeat metrics: `requests_total`,
 failed = every 404), `ws_connections_open`, `ws_connections_total`,
 `ws_messages_total`, `ws_messages_failed_total`, `core_errors_total` (core
 unreachable, non-200 or invalid reply, both transports),
-`rejected_by_core_total` (core 403: not registered), `last_core_error`,
-`last_core_error_at`, `draining` (highlighted when `true`).
+`rejected_by_core_total` (core 403: not registered), `too_large_total`
+(request bodies and WebSocket messages over `max_body_bytes`, both
+transports), `last_core_error`, `last_core_error_at`, `draining` (highlighted
+when `true`).
+
+## Minion connection schema
+
+At registration the channel also declares what minions are given to reach it
+(`internal/connection`): `base_url` (`http(s)://host[:port]`, no path),
+`host_header`, `sni`, `proxy`, `tls_verify` (default `false`),
+`tls_pin_sha256`, `user_agent`, `headers` (name → value), `request_timeout` (default `40s`;
+keep it above `CORE_SYNC_TIMEOUT`),
+`checkin_interval` (`60s`), `checkin_jitter` (`20` %) and
+`ws_reconnect_backoff` (`60s`). Every instance declares the same schema. In core,
+each operation keeps ready-to-use values for it (channel endpoints) for creating
+minions; the channel never sees them. There is no transport, method or
+path parameter: the channel accepts all of them. See the
+[contract](https://logoscore.github.io/logos-docs/contracts/minion-connection/).
 
 ## Request log
 
@@ -107,6 +123,8 @@ Every request is logged once, when it ends:
 
 - served: `debug` `request served`
 - client mistake (unreadable or malformed body): `info` `request failed`
+- body over `max_body_bytes`: `warn` `request failed` (`too_large`): a minion
+  built for a larger limit keeps failing until it is raised
 - client left while core was answering: `info` `request failed`
 - core trouble (unreachable, non-200, bad reply, 403): `warn` `request failed`
 - refused while drained: `debug` `request refused`
@@ -116,7 +134,7 @@ Fields: `request_id` (also sent to core as `X-Request-Id`), `remote_addr`,
 `body_bytes`, `headers.*` (every request header, lowercased, as received —
 nothing is redacted), `core_status` and `core_ms` (when core was called),
 `status`, `response_bytes`, `duration_ms`, `outcome` (`ok`, `draining`,
-`bad_request`, `core_error`, `rejected_by_core`, `client_gone`), and `stage` /
+`bad_request`, `too_large`, `core_error`, `rejected_by_core`, `client_gone`), and `stage` /
 `err` on failure. The body is never logged.
 
 Logs (`log/slog`, JSON or text on stderr) can also be tailed live from the module's

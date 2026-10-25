@@ -16,6 +16,7 @@ const (
 	outcomeOK             = "ok"
 	outcomeDraining       = "draining"
 	outcomeBadRequest     = "bad_request"      // unreadable or malformed body
+	outcomeTooLarge       = "too_large"        // body or frame over max_body_bytes
 	outcomeCoreError      = "core_error"       // core unreachable, non-200 or bad reply
 	outcomeRejectedByCore = "rejected_by_core" // core answered 403: not registered
 	outcomeClientGone     = "client_gone"      // the client left while core was answering

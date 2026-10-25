@@ -122,6 +122,7 @@ func TestRequestLogFailures(t *testing.T) {
 	defer ts.Close()
 
 	post(t, ts.URL+"/short", []byte("x")).Body.Close()
+	post(t, ts.URL+"/big", make([]byte, testMaxBody+1)).Body.Close()
 	h.SetDraining(true)
 	post(t, ts.URL+"/drained", buildPayload(0, []byte("x"), testUUID)).Body.Close()
 	h.SetDraining(false)
@@ -135,11 +136,12 @@ func TestRequestLogFailures(t *testing.T) {
 	post(t, tsDown.URL+"/core-down", buildPayload(0, []byte("x"), testUUID)).Body.Close()
 
 	recs := records()
-	if len(recs) != 3 {
+	if len(recs) != 4 {
 		t.Fatalf("records = %v", recs)
 	}
 	want := []struct{ level, msg, outcome, stage string }{
 		{"INFO", "request failed", "bad_request", "unpack"},
+		{"WARN", "request failed", "too_large", "read body"},
 		{"DEBUG", "request refused", "draining", ""},
 		{"WARN", "request failed", "core_error", "core sync"},
 	}
@@ -152,8 +154,11 @@ func TestRequestLogFailures(t *testing.T) {
 			t.Errorf("record %d stage = %q, want %q", i, stage, w.stage)
 		}
 	}
-	if recs[2]["core_status"] != float64(0) || recs[2]["err"] == nil {
-		t.Errorf("core-down record = %v", recs[2])
+	if recs[3]["core_status"] != float64(0) || recs[3]["err"] == nil {
+		t.Errorf("core-down record = %v", recs[3])
+	}
+	if st := h.Stats(); st.TooLargeTotal != 1 {
+		t.Errorf("too large total = %d, want 1", st.TooLargeTotal)
 	}
 	if _, ok := recs[0]["core_ms"]; ok {
 		t.Error("core_ms logged although core was not called")

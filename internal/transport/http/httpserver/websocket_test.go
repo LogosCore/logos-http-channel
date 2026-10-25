@@ -221,11 +221,19 @@ func TestWebSocketFailuresCloseTheConnection(t *testing.T) {
 	}
 
 	c = dial(t, url)
+	if err := c.Write(context.Background(), websocket.MessageBinary, make([]byte, testMaxBody+1)); err != nil {
+		t.Fatal(err)
+	}
+	if code := closed(t, c); code != websocket.StatusMessageTooBig && code != websocket.StatusNormalClosure {
+		t.Errorf("too large: close = %v", code)
+	}
+
+	c = dial(t, url)
 	send(t, c, testUUID, "fail")
 	if code := closed(t, c); code != websocket.StatusNormalClosure {
 		t.Errorf("core failure: close = %v", code)
 	}
-	if st := h.Stats(); st.WSMessagesFailed != 1 || st.CoreErrorsTotal != 1 {
+	if st := h.Stats(); st.WSMessagesFailed != 1 || st.CoreErrorsTotal != 1 || st.TooLargeTotal != 1 {
 		t.Errorf("stats = %+v", st)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logstream"
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/module"
 	"github.com/logoscore/logos-http-channel/internal/config"
+	"github.com/logoscore/logos-http-channel/internal/connection"
 	"github.com/logoscore/logos-http-channel/internal/management"
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
 )
@@ -81,6 +82,7 @@ func main() {
 	regDone := make(chan struct{})
 	go func() {
 		defer close(regDone)
+		connSchema := connection.Schema()
 		mc := module.Config{
 			AMQPURL: cfg.RabbitMQURL,
 			Identity: lifecycle.Identity{
@@ -89,6 +91,7 @@ func main() {
 				Instance:   cfg.ChannelID,
 				Version:    version,
 			},
+			Connection: &connSchema,
 		}
 		// The live log tail is served on the management queue.
 		if mgmtSrv != nil {

@@ -256,8 +256,8 @@ type wsConn struct {
 	// admitMu orders admitting a message (inflight.Add) against goAway
 	// starting to wait: once going is set, nothing more enters flight.
 	admitMu sync.Mutex
-	mu       sync.Mutex
-	queues   map[string]chan wsJob // per minion UUID, first in first out
+	mu      sync.Mutex
+	queues  map[string]chan wsJob // per minion UUID, first in first out
 
 	going     atomic.Bool // closing gently: frames read meanwhile are dropped
 	closeOnce sync.Once
@@ -337,7 +337,8 @@ func (c *wsConn) readEnded(err error, idle bool) {
 	case idle:
 		c.setReason(closeIdleTimeout)
 	case websocket.CloseStatus(err) == websocket.StatusMessageTooBig || strings.Contains(err.Error(), "read limited"):
-		c.fail(slog.LevelInfo, outcomeBadRequest, "frame", err, closeTooLarge)
+		c.h.tooLarge.Add(1)
+		c.fail(slog.LevelWarn, outcomeTooLarge, "frame", err, closeTooLarge)
 	case websocket.CloseStatus(err) != -1:
 		c.setReason(closeClientClosed)
 	default:
