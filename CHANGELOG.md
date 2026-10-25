@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **WebSocket.** Minions may keep a WebSocket open (valid handshake on any
+  path, alongside plain requests): each binary frame is one packed message,
+  answered by one packed frame. Up to `ws_max_inflight` messages per
+  connection in flight; the same minion UUID is answered in order. Failures
+  close the connection without a reason; refused handshakes get the plain 404.
+  New live properties `ws_max_connections`, `ws_max_inflight`,
+  `ws_ping_interval`, `ws_idle_timeout`; status values for connections and
+  messages; action `close_connections`. Drain and shutdown close connections
+  gently (going away after in-flight messages). One log line per connection
+  and per relayed frame.
+
 - **Module management.** The channel declares a management manifest at
   registration and serves core's management RPC on its `rpc_queue`
   (`logos.channel.rpc.<CHANNEL_ID>`, consumed before registering):

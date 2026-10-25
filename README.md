@@ -29,6 +29,33 @@ Request and response share the same structure:
 - On any failure (malformed or oversized body, core unreachable, core non-200,
   invalid core reply, draining): a plain `404 page not found`. The reason is only logged.
 
+## WebSocket
+
+A minion may also keep a WebSocket open and exchange its messages over it:
+a valid WebSocket handshake on **any path** is accepted, alongside plain
+requests on the same port.
+
+- Each **binary frame** is one message, packed exactly like a request body;
+  the reply is one binary frame packed like a response. Each frame is relayed
+  to core like a request (`source.transport: "websocket"`).
+- Up to `ws_max_inflight` messages per connection are relayed at once. Replies
+  carry no id other than the minion UUID, so messages with the **same UUID are
+  answered in order**, messages with different UUIDs as soon as core answers:
+  match replies by UUID.
+- The channel pings every `ws_ping_interval` (WebSocket control frames, never
+  sent to core) and closes a connection that sends no message for
+  `ws_idle_timeout`.
+- Failures stay opaque: a refused handshake (invalid, draining, too many
+  connections) gets the plain `404`; a failure on an open connection (text
+  frame, malformed or oversized frame, core failure) closes it with no reason
+  given. Reconnect and resend.
+- Drain, shutdown and the `close_connections` action close connections with
+  *going away* (1001) after answering the messages already in flight; frames
+  received meanwhile are dropped.
+
+Behind a reverse proxy, enable WebSocket upgrades and keep its idle timeout
+above `ws_ping_interval` (nginx: `proxy_read_timeout`, 60s by default).
+
 ## Registration with core
 
 Core only accepts sync traffic from registered module instances. On startup the
@@ -54,18 +81,25 @@ Properties (defaults are the env values the process started with):
 | --- | --- | --- | --- |
 | `max_body_bytes` | bytes | live | 17 to 64 MiB (or up to the env value, if that is larger); the core reply limit scales with it |
 | `log_level` | `debug` / `info` / `warn` / `error` | live | stderr level, default `info`: `debug` adds every request outcome, `info` client errors, startup and management changes, `warn` core problems only |
+| `ws_max_connections` | int | live | open WebSockets at once, default 1000; further handshakes get a 404 |
+| `ws_max_inflight` | int | live (new connections) | messages relayed at once per connection, default 4 |
+| `ws_ping_interval` | duration | live (new connections) | default `30s`, 5s to 5m |
+| `ws_idle_timeout` | duration | live (new connections) | default `5m`, 10s to 24h |
 
 How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.
 
-Actions: `drain` (every request gets a 404 until `resume`; shown in the `draining` status value, heartbeat health stays `healthy`),
-`resume`, and `check_core` (POSTs `{}` to the core sync URL and reports
+Actions: `drain` (every request and WebSocket handshake gets a 404 until `resume`, open WebSockets are closed; shown in the `draining` status value, heartbeat health stays `healthy`),
+`resume`, `close_connections` (closes every WebSocket after its in-flight messages), and `check_core` (POSTs `{}` to the core sync URL and reports
 `reachable`, `status` and `latency_ms`; core's 400 counts as reachable).
 
 Status values, also sent in heartbeat metrics: `requests_total`,
-`succeeded_total`, `failed_total` (every 404), `core_errors_total` (core
-unreachable, non-200 or invalid reply), `rejected_by_core_total` (core 403:
-not registered), `last_core_error`, `last_core_error_at`, `draining`.
+`succeeded_total`, `failed_total` (HTTP requests and WebSocket handshakes;
+failed = every 404), `ws_connections_open`, `ws_connections_total`,
+`ws_messages_total`, `ws_messages_failed_total`, `core_errors_total` (core
+unreachable, non-200 or invalid reply, both transports),
+`rejected_by_core_total` (core 403: not registered), `last_core_error`,
+`last_core_error_at`, `draining` (highlighted when `true`).
 
 ## Request log
 
@@ -93,6 +127,17 @@ change stderr output.
 
 Live values are not persisted by the channel: on every (re-)register core sends
 the effective config and the channel applies it.
+
+A WebSocket logs one line per connection when it ends (`websocket closed`, or
+`websocket failed` at the failure's level): `conn_id`, the handshake request's
+fields and headers, `duration_ms`, `frames_in` / `frames_out`, `bytes_in` /
+`bytes_out`, `messages_failed` and `close_reason` (`client_closed`,
+`idle_timeout`, `ping_timeout`, `connection_lost`, `bad_frame`,
+`message_too_large`, `relay_failed`, `write_failed`, `draining`, `shutdown`,
+`closed_by_admin`). Each relayed frame logs `websocket message relayed` at
+debug (`conn_id`, `request_id`, sizes, core status and timing) or
+`websocket message failed`. A refused handshake logs `websocket refused` like a
+request line.
 
 ## Health check
 

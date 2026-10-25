@@ -111,6 +111,11 @@ func main() {
 			slog.Warn("shutdown", "addr", s.Addr, "err", err)
 		}
 	}
+	// WebSockets are hijacked connections Shutdown does not wait for: close
+	// them after their in-flight messages, still registered with core.
+	if err := handler.ShutdownWebSockets(shutdownCtx); err != nil {
+		slog.Warn("shutdown websockets", "err", err)
+	}
 	stopReg()
 	<-regDone
 }

@@ -36,6 +36,7 @@ type CoreConfig struct {
 // RuntimeConfig holds the settings core can change live via management.
 type RuntimeConfig struct {
 	MaxBodyBytes int64
+	WebSocket    WebSocketConfig
 }
 
 // Stats is a snapshot of the handler's counters.
@@ -48,6 +49,11 @@ type Stats struct {
 	LastCoreError   string
 	LastCoreErrorAt time.Time
 	Draining        bool
+
+	WSConnectionsOpen  int64
+	WSConnectionsTotal int64
+	WSMessagesTotal    int64
+	WSMessagesFailed   int64
 }
 
 type coreError struct {
@@ -74,6 +80,8 @@ type Handler struct {
 
 	requests, succeeded, failed, coreErrors, rejected atomic.Int64
 	lastCoreErr                                       atomic.Pointer[coreError]
+
+	ws wsState
 }
 
 // NewHandler returns a handler forwarding to {core.SyncBaseURL}/api/channel/sync.
@@ -88,6 +96,7 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 		syncURL:     SyncURL(core.SyncBaseURL),
 		syncTimeout: core.SyncTimeout,
 	}
+	h.ws.conns = map[*wsConn]struct{}{}
 	h.SetConfig(cfg)
 	return h
 }
@@ -137,8 +146,14 @@ func (h *Handler) trustedProxies() []netip.Prefix {
 	return nil
 }
 
-// SetDraining toggles drain mode: while draining every request gets a 404.
-func (h *Handler) SetDraining(v bool) { h.draining.Store(v) }
+// SetDraining toggles drain mode: while draining every request and
+// WebSocket handshake gets a 404, and open WebSockets are closed gently.
+func (h *Handler) SetDraining(v bool) {
+	h.draining.Store(v)
+	if v {
+		h.CloseWebSockets(closeDraining)
+	}
+}
 
 // Draining reports whether drain mode is on.
 func (h *Handler) Draining() bool { return h.draining.Load() }
@@ -158,6 +173,11 @@ func (h *Handler) Stats() Stats {
 		CoreErrorsTotal: h.coreErrors.Load(),
 		RejectedByCore:  h.rejected.Load(),
 		Draining:        h.draining.Load(),
+
+		WSConnectionsOpen:  h.ws.open.Load(),
+		WSConnectionsTotal: h.ws.total.Load(),
+		WSMessagesTotal:    h.ws.messages.Load(),
+		WSMessagesFailed:   h.ws.failed.Load(),
 	}
 	if e := h.lastCoreErr.Load(); e != nil {
 		st.LastCoreError, st.LastCoreErrorAt = e.msg, e.at
@@ -166,6 +186,13 @@ func (h *Handler) Stats() Stats {
 }
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	// A WebSocket handshake on any path opens a persistent connection that
+	// carries the same messages as frames (websocket.go).
+	if isWebSocketUpgrade(r) {
+		h.serveWebSocket(rw, r)
+		return
+	}
+
 	cfg := h.cfg.Load()
 	h.requests.Add(1)
 	w := &countingWriter{ResponseWriter: rw}
@@ -201,55 +228,93 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	res := h.relay(r.Context(), rl.id, transportHTTP, id, encryptedData, cfg.MaxBodyBytes)
+	rl.coreStatus, rl.coreTime = res.coreStatus, res.coreTime
+	if res.err != nil {
+		fail(res.level, res.outcome, res.stage, res.err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = w.Write(res.reply)
+	h.succeeded.Add(1)
+}
+
+// Transport identifiers sent to core in source.transport.
+const (
+	transportHTTP      = "http"
+	transportWebSocket = "websocket"
+)
+
+// relayResult is the outcome of one message's round trip to core. On failure
+// err is set with the level, outcome and stage to log it under.
+type relayResult struct {
+	reply      []byte
+	coreStatus int
+	coreTime   time.Duration
+
+	err     error
+	level   slog.Level
+	outcome string
+	stage   string
+}
+
+// relay sends one unpacked message to core and packs the reply: the part
+// both transports share. clientCtx ends when the client goes away; core
+// error counters are kept here, per-transport counters by the caller.
+func (h *Handler) relay(clientCtx context.Context, messageID, transport, id, encryptedData string, maxBodyBytes int64) relayResult {
 	inbound := protocol.InboundMinionMessage{
-		MessageID: rl.id,
+		MessageID: messageID,
 		Type:      protocol.TypeInboundMinionMessage,
 		Version:   protocol.VersionV1,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Source: protocol.SourceInfo{
 			Module:         "channel",
 			ModuleInstance: h.channelID,
-			Transport:      "http",
+			Transport:      transport,
 			Tenant:         "default",
 		},
 		ID:            id,
 		EncryptedData: encryptedData,
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), h.syncTimeout)
+	ctx, cancel := context.WithTimeout(clientCtx, h.syncTimeout)
 	defer cancel()
 	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
-	maxReplyBytes := 2*cfg.MaxBodyBytes + envelopeOverhead
+	maxReplyBytes := 2*maxBodyBytes + envelopeOverhead
 	coreStart := time.Now()
-	outbound, coreStatus, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound, rl.id)
-	rl.coreStatus, rl.coreTime = coreStatus, max(time.Since(coreStart), time.Microsecond)
+	outbound, coreStatus, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound, messageID)
+	res := relayResult{coreStatus: coreStatus, coreTime: max(time.Since(coreStart), time.Microsecond)}
+	fail := func(level slog.Level, outcome, stage string, err error) relayResult {
+		res.level, res.outcome, res.stage, res.err = level, outcome, stage, err
+		return res
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, errRejectedByCore):
 			h.rejected.Add(1)
-			fail(slog.LevelWarn, outcomeRejectedByCore, "core sync", err)
-		case r.Context().Err() != nil:
+			return fail(slog.LevelWarn, outcomeRejectedByCore, "core sync", err)
+		case clientCtx.Err() != nil:
 			// A client that went away is not a core error.
-			fail(slog.LevelInfo, outcomeClientGone, "core sync", err)
+			return fail(slog.LevelInfo, outcomeClientGone, "core sync", err)
 		default:
-			h.coreErrors.Add(1)
-			h.lastCoreErr.Store(&coreError{msg: err.Error(), at: time.Now().UTC()})
-			fail(slog.LevelWarn, outcomeCoreError, "core sync", err)
+			h.recordCoreError(err.Error())
+			return fail(slog.LevelWarn, outcomeCoreError, "core sync", err)
 		}
-		return
 	}
 
-	resp, err := pack(outbound.ID, outbound.EncryptedData)
+	reply, err := pack(outbound.ID, outbound.EncryptedData)
 	if err != nil {
-		h.coreErrors.Add(1)
-		h.lastCoreErr.Store(&coreError{msg: "pack reply: " + err.Error(), at: time.Now().UTC()})
-		fail(slog.LevelWarn, outcomeCoreError, "pack", err)
-		return
+		h.recordCoreError("pack reply: " + err.Error())
+		return fail(slog.LevelWarn, outcomeCoreError, "pack", err)
 	}
+	res.reply = reply
+	return res
+}
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	_, _ = w.Write(resp)
-	h.succeeded.Add(1)
+func (h *Handler) recordCoreError(msg string) {
+	h.coreErrors.Add(1)
+	h.lastCoreErr.Store(&coreError{msg: msg, at: time.Now().UTC()})
 }
 
 // NewHealth returns the internal health server. It listens on its own port,

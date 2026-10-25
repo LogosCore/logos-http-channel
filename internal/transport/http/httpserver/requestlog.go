@@ -19,6 +19,9 @@ const (
 	outcomeCoreError      = "core_error"       // core unreachable, non-200 or bad reply
 	outcomeRejectedByCore = "rejected_by_core" // core answered 403: not registered
 	outcomeClientGone     = "client_gone"      // the client left while core was answering
+	// WebSocket only.
+	outcomeTooManyConnections = "too_many_connections" // ws_max_connections reached
+	outcomeClosed             = "closed"               // the connection ended without a failure
 )
 
 // requestLog collects one request's facts; log writes them as one line when
@@ -49,18 +52,8 @@ func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Pre
 	if !slog.Default().Enabled(r.Context(), l.level) {
 		return
 	}
-	attrs := []slog.Attr{
-		slog.String("request_id", l.id),
-		slog.String("remote_addr", r.RemoteAddr),
-		slog.String("client_ip", clientIP(r, trusted)),
-		slog.String("proto", r.Proto),
-		slog.String("host", r.Host),
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-		slog.String("query", r.URL.RawQuery),
-		slog.Int64("content_length", r.ContentLength),
-		slog.Int64("body_bytes", l.bodyBytes),
-	}
+	attrs := append([]slog.Attr{slog.String("request_id", l.id)}, clientAttrs(r, trusted)...)
+	attrs = append(attrs, slog.Int64("body_bytes", l.bodyBytes))
 	if l.coreTime > 0 {
 		attrs = append(attrs, slog.Int("core_status", l.coreStatus), slog.Float64("core_ms", ms(l.coreTime)))
 	}
@@ -80,6 +73,21 @@ func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Pre
 	// out of the live tail's attr budget.
 	attrs = append(attrs, logging.Headers(r.Header))
 	slog.LogAttrs(r.Context(), l.level, l.msg, attrs...)
+}
+
+// clientAttrs describes the client and its request (a plain request, or the
+// handshake of a WebSocket connection). Headers are added separately, last.
+func clientAttrs(r *http.Request, trusted []netip.Prefix) []slog.Attr {
+	return []slog.Attr{
+		slog.String("remote_addr", r.RemoteAddr),
+		slog.String("client_ip", clientIP(r, trusted)),
+		slog.String("proto", r.Proto),
+		slog.String("host", r.Host),
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("query", r.URL.RawQuery),
+		slog.Int64("content_length", r.ContentLength),
+	}
 }
 
 // ms is d in milliseconds with microsecond precision.

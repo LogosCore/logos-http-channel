@@ -49,6 +49,8 @@ Control-plane plumbing (reconnect, register/heartbeat/deregister, serving manage
 
 **Logging:** `log/slog` only, built by channel-core `logging.New` (`LOG_FORMAT` json/text on stderr, level from the `log_level` property via a `slog.LevelVar`, teed into `logstream.Hub` for core's live tail). Each request logs exactly one line when it ends (`httpserver/requestlog.go`): served at debug, client mistakes at info, core trouble at warn; all request headers unredacted, never the body or the minion payload fields.
 
+**WebSocket** (`httpserver/websocket.go`): a valid handshake on any path opens a connection whose binary frames are messages in the same packed format; each is relayed through the same `relay` path as a request. Messages of one minion UUID are serialized (a per-UUID queue), different UUIDs run concurrently up to `ws_max_inflight`. The handshake is validated before `websocket.Accept` so a bad one still gets the plain 404; any failure on an open connection closes it with no reason. Connections are hijacked, so `ShutdownWebSockets` (not `http.Server.Shutdown`) closes them; drain closes them too.
+
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
 **External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — control-plane session (`pkg/module`) and management server (`pkg/mgmt`).

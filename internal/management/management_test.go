@@ -82,7 +82,7 @@ func TestApplyUpdatesHandlerLive(t *testing.T) {
 	if len(out.RestartRequired) != 0 || len(out.Rejected) != 0 {
 		t.Errorf("reply = %+v", out)
 	}
-	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096}
+	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096, WebSocket: httpserver.DefaultWebSocketConfig}
 	if got := h.Config(); got != want || level.Level() != slog.LevelDebug {
 		t.Errorf("config = %+v level = %s, want %+v debug", got, level.Level(), want)
 	}

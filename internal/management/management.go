@@ -20,6 +20,9 @@ import (
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
 )
 
+// defaultWS are the WebSocket defaults the manifest declares.
+var defaultWS = httpserver.DefaultWebSocketConfig
+
 // logLevels maps the log_level values onto slog levels, most verbose first.
 // Each description says what the channel logs at that level.
 var logLevels = []struct {
@@ -81,25 +84,60 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Default: defaultLogLevel,
 				Options: logLevelOptions(),
 			}, Apply: protocol.ApplyLive},
+			{FieldSpec: protocol.FieldSpec{
+				Key: "ws_max_connections", Type: protocol.FieldInt, Label: "Max WebSocket connections",
+				Description: "Open WebSocket connections allowed at once; further handshakes get a 404.",
+				Group:       "WebSocket", Order: 3,
+				Default: defaultWS.MaxConnections, Min: 1, Max: 100000,
+			}, Apply: protocol.ApplyLive},
+			{FieldSpec: protocol.FieldSpec{
+				Key: "ws_max_inflight", Type: protocol.FieldInt, Label: "Messages in flight per connection",
+				Description: "Messages of one connection relayed to core at once. Messages with the same minion UUID are always relayed in order. Applies to new connections.",
+				Group:       "WebSocket", Order: 4,
+				Default: defaultWS.MaxInflight, Min: 1, Max: 64,
+			}, Apply: protocol.ApplyLive},
+			{FieldSpec: protocol.FieldSpec{
+				Key: "ws_ping_interval", Type: protocol.FieldDuration, Label: "Ping interval",
+				Description: "How often the channel pings each connection (WebSocket control frames, never sent to core). Keep it below proxy idle timeouts. Applies to new connections.",
+				Group:       "WebSocket", Order: 5,
+				Default: defaultWS.PingInterval.String(), Min: "5s", Max: "5m",
+			}, Apply: protocol.ApplyLive},
+			{FieldSpec: protocol.FieldSpec{
+				Key: "ws_idle_timeout", Type: protocol.FieldDuration, Label: "Idle timeout",
+				Description: "A connection that sends no message for this long is closed. Applies to new connections.",
+				Group:       "WebSocket", Order: 6,
+				Default: defaultWS.IdleTimeout.String(), Min: "10s", Max: "24h",
+			}, Apply: protocol.ApplyLive},
 		},
 		Actions: []protocol.ActionSpec{
 			{
 				Name: "drain", Label: "Drain", Risk: protocol.RiskHigh,
-				Description: "Stop serving clients: every request gets a 404 until resumed. Shown in the Draining status value.",
+				Description: "Stop serving clients: every request and WebSocket handshake gets a 404 until resumed, and open WebSockets are closed. Shown in the Draining status value.",
 				Confirm:     "Clients will receive 404 for every request until the channel is resumed.",
 			},
 			{Name: "resume", Label: "Resume", Risk: protocol.RiskLow, Description: "Serve clients again after a drain."},
+			{
+				Name: "close_connections", Label: "Close WebSockets", Risk: protocol.RiskHigh,
+				Description: "Close every open WebSocket connection after its in-flight messages are answered. Minions may reconnect at once.",
+				Confirm:     "All connected minions will be disconnected.",
+			},
 			{
 				Name: "check_core", Label: "Check core", Risk: protocol.RiskLow, TimeoutSeconds: 10,
 				Description: "Probe core's sync endpoint and report reachability and latency.",
 			},
 		},
 		Status: []protocol.StatusSpec{
-			{Key: "requests_total", Type: protocol.FieldInt, Label: "Requests"},
-			{Key: "succeeded_total", Type: protocol.FieldInt, Label: "Succeeded"},
-			{Key: "failed_total", Type: protocol.FieldInt, Label: "Failed (404)"},
+			{Key: "requests_total", Type: protocol.FieldInt, Label: "HTTP requests",
+				Description: "Plain requests and WebSocket handshakes."},
+			{Key: "succeeded_total", Type: protocol.FieldInt, Label: "HTTP succeeded"},
+			{Key: "failed_total", Type: protocol.FieldInt, Label: "HTTP failed (404)"},
+			{Key: "ws_connections_open", Type: protocol.FieldInt, Label: "WebSocket connections"},
+			{Key: "ws_connections_total", Type: protocol.FieldInt, Label: "WebSocket connections opened"},
+			{Key: "ws_messages_total", Type: protocol.FieldInt, Label: "WebSocket messages"},
+			{Key: "ws_messages_failed_total", Type: protocol.FieldInt, Label: "WebSocket messages failed",
+				Description: "Each one closed its connection."},
 			{Key: "core_errors_total", Type: protocol.FieldInt, Label: "Core errors",
-				Description: "Core unreachable, non-200, or invalid reply."},
+				Description: "Core unreachable, non-200, or invalid reply (both transports)."},
 			{Key: "rejected_by_core_total", Type: protocol.FieldInt, Label: "Rejected by core",
 				Description: "Core answered 403: this instance was not registered."},
 			{Key: "last_core_error", Type: protocol.FieldString, Label: "Last core error"},
@@ -133,6 +171,11 @@ func New(cfg config.Config, h *httpserver.Handler, level *slog.LevelVar) (*mgmt.
 		slog.Info("management: resumed", "by", actorName(actor))
 		return map[string]any{"draining": false, "was_draining": was}, nil
 	})
+	s.Action("close_connections", func(_ context.Context, _ map[string]any, actor *protocol.Actor) (any, error) {
+		n := h.CloseWebSockets("closed_by_admin")
+		slog.Info("management: websocket connections closed", "by", actorName(actor), "connections", n)
+		return map[string]any{"closed": n}, nil
+	})
 	s.Action("check_core", func(ctx context.Context, _ map[string]any, _ *protocol.Actor) (any, error) {
 		return CheckCore(ctx, h.Client(), h.SyncEndpoint()), nil
 	})
@@ -147,14 +190,35 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	if n, ok := protocol.AsInt64(live["max_body_bytes"]); ok {
 		next.MaxBodyBytes = n
 	}
+	if n, ok := protocol.AsInt64(live["ws_max_connections"]); ok {
+		next.WebSocket.MaxConnections = int(n)
+	}
+	if n, ok := protocol.AsInt64(live["ws_max_inflight"]); ok {
+		next.WebSocket.MaxInflight = int(n)
+	}
+	for key, dst := range map[string]*time.Duration{
+		"ws_ping_interval": &next.WebSocket.PingInterval,
+		"ws_idle_timeout":  &next.WebSocket.IdleTimeout,
+	} {
+		if v := live[key]; v != nil {
+			d, err := protocol.ParseDuration(v)
+			if err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+			*dst = d
+		}
+	}
 	lvl := slogLevel(live["log_level"])
 	if next == prev && level.Level() == lvl {
 		return nil
 	}
 	h.SetConfig(next)
 	level.Set(lvl)
+	ws := next.WebSocket
 	slog.Info("management: config applied", "by", actorName(mgmt.ActorFromContext(ctx)),
-		"max_body_bytes", next.MaxBodyBytes, "log_level", lvl.String())
+		"max_body_bytes", next.MaxBodyBytes, "log_level", lvl.String(),
+		"ws_max_connections", ws.MaxConnections, "ws_max_inflight", ws.MaxInflight,
+		"ws_ping_interval", ws.PingInterval.String(), "ws_idle_timeout", ws.IdleTimeout.String())
 	return nil
 }
 
@@ -167,6 +231,11 @@ func status(h *httpserver.Handler) map[string]any {
 		"core_errors_total":      st.CoreErrorsTotal,
 		"rejected_by_core_total": st.RejectedByCore,
 		"draining":               st.Draining,
+
+		"ws_connections_open":      st.WSConnectionsOpen,
+		"ws_connections_total":     st.WSConnectionsTotal,
+		"ws_messages_total":        st.WSMessagesTotal,
+		"ws_messages_failed_total": st.WSMessagesFailed,
 	}
 	if st.LastCoreError != "" {
 		out["last_core_error"] = st.LastCoreError
