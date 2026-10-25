@@ -21,17 +21,15 @@ import (
 )
 
 // logLevels maps the log_level values onto slog levels, most verbose first.
-// What the channel logs at each: debug every request outcome; info client
-// mistakes, startup and management changes; warn core trouble; error nothing
-// yet.
+// Each description says what the channel logs at that level.
 var logLevels = []struct {
-	value, label string
-	level        slog.Level
+	value, label, description string
+	level                     slog.Level
 }{
-	{"debug", "Debug", slog.LevelDebug},
-	{"info", "Info", slog.LevelInfo},
-	{"warn", "Warn", slog.LevelWarn},
-	{"error", "Error", slog.LevelError},
+	{"debug", "Debug", "Every request outcome, plus everything below.", slog.LevelDebug},
+	{"info", "Info", "Rejected client requests, startup and config changes, plus core problems.", slog.LevelInfo},
+	{"warn", "Warn", "Core problems only: sync failed, rejected or bad reply.", slog.LevelWarn},
+	{"error", "Error", "Errors only (the channel has none yet).", slog.LevelError},
 }
 
 const defaultLogLevel = "info"
@@ -40,7 +38,7 @@ const defaultLogLevel = "info"
 func logLevelOptions() []protocol.EnumOption {
 	out := make([]protocol.EnumOption, len(logLevels))
 	for i, l := range logLevels {
-		out[i] = protocol.EnumOption{Value: l.value, Label: l.label}
+		out[i] = protocol.EnumOption{Value: l.value, Label: l.label, Description: l.description}
 	}
 	return out
 }
@@ -78,7 +76,7 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 			}, Apply: protocol.ApplyLive},
 			{FieldSpec: protocol.FieldSpec{
 				Key: "log_level", Type: protocol.FieldEnum, Label: "Log level",
-				Description: "Channel output level. debug: every request outcome; info: client errors, startup, management changes; warn: core problems only; error: errors only.",
+				Description: "Level of the channel's own output (stderr). The Logs tab has its own level.",
 				Group:       "Logging", Order: 2,
 				Default: defaultLogLevel,
 				Options: logLevelOptions(),
