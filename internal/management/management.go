@@ -104,7 +104,8 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Description: "Core answered 403: this instance was not registered."},
 			{Key: "last_core_error", Type: protocol.FieldString, Label: "Last core error"},
 			{Key: "last_core_error_at", Type: protocol.FieldString, Label: "Last core error at"},
-			{Key: "draining", Type: protocol.FieldBool, Label: "Draining"},
+			// Draining needs an operator's eye: clients get 404 for everything.
+			{Key: "draining", Type: protocol.FieldBool, Label: "Draining", Alert: true},
 		},
 	}
 }
