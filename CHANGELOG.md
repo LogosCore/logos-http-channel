@@ -7,11 +7,15 @@
   (`logos.channel.rpc.<CHANNEL_ID>`, consumed before registering):
   - Live properties `max_body_bytes`, `core_sync_timeout`, `log_level`; restart-only
     `logos_sync_base_url` (reported as restart-required). Defaults are the env values.
-  - Actions `drain` (404 for every request, heartbeat status `draining`),
+  - Actions `drain` (404 for every request; the heartbeat stays `healthy` and
+    the `draining` status value shows the pause),
     `resume`, `check_core` (reachability and latency of the core sync URL).
   - Status counters `requests_total`, `succeeded_total`, `failed_total`,
     `core_errors_total`, `rejected_by_core_total`, plus `last_core_error`,
     `last_core_error_at`, `draining`; also sent in heartbeat metrics.
+- The control-plane session (connect, serve management, register, heartbeat,
+  deregister, reconnect with backoff) now runs on channel-core `pkg/module`;
+  `internal/registration` is gone.
 - The core sync timeout is now a per-request context timeout (default still
   30s) instead of a fixed HTTP client timeout.
 - New `log_level=debug` logs every request outcome.

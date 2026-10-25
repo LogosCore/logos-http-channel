@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/mgmt"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	"github.com/logoscore/logos-http-channel/internal/config"
@@ -64,7 +63,7 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 		Actions: []protocol.ActionSpec{
 			{
 				Name: "drain", Label: "Drain", Risk: protocol.RiskHigh,
-				Description: "Stop serving clients: every request gets a 404 and the heartbeat reports draining.",
+				Description: "Stop serving clients: every request gets a 404 until resumed. Shown in the Draining status value.",
 				Confirm:     "Clients will receive 404 for every request until the channel is resumed.",
 			},
 			{Name: "resume", Label: "Resume", Risk: protocol.RiskLow, Description: "Serve clients again after a drain."},
@@ -114,16 +113,6 @@ func New(cfg config.Config, h *httpserver.Handler) (*mgmt.Server, error) {
 		return CheckCore(ctx, h.Client(), h.SyncEndpoint()), nil
 	})
 	return s, nil
-}
-
-// LifecycleStatus reports draining in heartbeats while h is drained.
-func LifecycleStatus(h *httpserver.Handler) lifecycle.Option {
-	return lifecycle.WithStatus(func() lifecycle.Status {
-		if h.Draining() {
-			return lifecycle.StatusDraining
-		}
-		return lifecycle.StatusHealthy
-	})
 }
 
 // apply maps live property values onto the handler's runtime config.

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
+	"github.com/logoscore/logos-golang-channel-core/v2/pkg/module"
 	"github.com/logoscore/logos-http-channel/internal/config"
 	"github.com/logoscore/logos-http-channel/internal/management"
-	"github.com/logoscore/logos-http-channel/internal/registration"
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
 )
 
@@ -55,19 +55,26 @@ func main() {
 	log.Printf("logos-http-channel listening on %s, health on %s (channel_id=%s, logos=%s, max_body=%d)",
 		srv.Addr, health.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.MaxBodyBytes)
 
-	// Registration outlives ctx: in-flight requests must drain while core still
-	// treats this instance as registered, so it is stopped after the servers.
+	// The control-plane session outlives ctx: in-flight requests must drain
+	// while core still treats this instance as registered, so it is stopped
+	// after the servers.
 	regCtx, stopReg := context.WithCancel(context.Background())
 	regDone := make(chan struct{})
 	go func() {
 		defer close(regDone)
-		registration.Run(regCtx, cfg.RabbitMQURL, lifecycle.Identity{
-			ModuleType: "channel",
-			ModuleName: "http",
-			Instance:   cfg.ChannelID,
-			Version:    version,
-			RPCQueue:   "logos.channel.rpc." + cfg.ChannelID,
-		}, mgmtSrv, management.LifecycleStatus(handler))
+		err := module.Run(regCtx, module.Config{
+			AMQPURL: cfg.RabbitMQURL,
+			Identity: lifecycle.Identity{
+				ModuleType: "channel",
+				ModuleName: "http",
+				Instance:   cfg.ChannelID,
+				Version:    version,
+			},
+			Management: mgmtSrv,
+		})
+		if err != nil {
+			log.Fatalf("control plane: %v", err)
+		}
 	}()
 
 	<-ctx.Done()

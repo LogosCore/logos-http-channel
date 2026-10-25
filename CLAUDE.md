@@ -27,14 +27,15 @@ go build -o http-channel ./cmd/http-channel # build binary
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, base64-encoded for the envelope
 - Response uses a random offset so the UUID position varies per response
 
-**Entrypoint:** `cmd/http-channel/main.go` — loads config, builds the handler and its management server, starts the client server, the internal health server and the registration loop. On SIGINT/SIGTERM it drains the servers first, then deregisters.
+**Entrypoint:** `cmd/http-channel/main.go` — loads config, builds the handler and its management server, starts the client server, the internal health server and the control-plane session (`channel-core/v2/pkg/module.Run`). On SIGINT/SIGTERM it drains the servers first, then deregisters.
 
 **Internal packages:**
 
 - `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `RABBITMQ_*`)
 - `internal/transport/http/httpserver/` — `Handler` is the client handler: bare (no ServeMux, so no redirects), treating every request as a message. It reads `RuntimeConfig` (max body, core sync timeout, log level) from an atomic pointer per request, so `SetConfig` applies live; keeps atomic counters (`Stats`) and a drain flag. `New` wraps it in the client server; `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
 - `internal/management/` — the management manifest (properties, `drain`/`resume`/`check_core` actions, counter status) built from env config, bound to the `Handler` via `logos-golang-channel-core/v2/pkg/mgmt`.
-- `internal/registration/` — per AMQP session: starts the `pkg/mgmt` consumer on the `rpc_queue` **before** registering, then keeps the instance registered with `pkg/lifecycle` (`WithManagement`); supervises it with reconnect/backoff and logs lifecycle outcomes. Core rejects sync (403 → client 404) from unregistered instances.
+
+Control-plane plumbing (reconnect, register/heartbeat/deregister, serving management on the `rpc_queue`) lives in channel-core `pkg/module`; this repo only declares what is managed. Keep it that way: no lifecycle code here, and no channel-specific behavior pushed into channel-core. Core rejects sync (403 → client 404) from unregistered instances.
 
 **Request flow:**
 
@@ -48,7 +49,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
-**External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — lifecycle (registration) client and management server (`pkg/mgmt`).
+**External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — control-plane session (`pkg/module`) and management server (`pkg/mgmt`).
 
 ## Testing
 

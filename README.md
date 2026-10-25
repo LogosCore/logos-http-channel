@@ -57,7 +57,7 @@ Properties (defaults are the env values the process started with):
 | `log_level` | `info` / `debug` | live | `debug` also logs every request outcome |
 | `logos_sync_base_url` | url | restart | a change is only reported as restart-required |
 
-Actions: `drain` (every request gets a 404 and heartbeats report `draining`),
+Actions: `drain` (every request gets a 404 until `resume`; shown in the `draining` status value, heartbeat health stays `healthy`),
 `resume`, and `check_core` (POSTs `{}` to the core sync URL and reports
 `reachable`, `status` and `latency_ms`; core's 400 counts as reachable).
 
