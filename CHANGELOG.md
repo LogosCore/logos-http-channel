@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.2.0
 
 - **WebSocket.** Minions may keep a WebSocket open (valid handshake on any
   path, alongside plain requests): each binary frame is one packed message,
