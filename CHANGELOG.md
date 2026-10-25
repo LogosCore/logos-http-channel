@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.4.0
 
 - **SDK split.** Builds on `logos-golang-module-core` v0.1.0 (control plane,
   management, logging) and `logos-golang-channel-core` v3.0.0
