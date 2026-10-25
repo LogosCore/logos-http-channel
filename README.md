@@ -53,7 +53,7 @@ Properties (defaults are the env values the process started with):
 | Key | Type | Applies | Notes |
 | --- | --- | --- | --- |
 | `max_body_bytes` | bytes | live | 17 to 64 MiB; the core reply limit scales with it |
-| `log_level` | `info` / `debug` | live | `debug` also logs every request outcome |
+| `log_level` | `info` / `debug` | live | stderr level; `debug` also logs every request outcome |
 
 How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.
@@ -66,6 +66,12 @@ Status values, also sent in heartbeat metrics: `requests_total`,
 `succeeded_total`, `failed_total` (every 404), `core_errors_total` (core
 unreachable, non-200 or invalid reply), `rejected_by_core_total` (core 403:
 not registered), `last_core_error`, `last_core_error_at`, `draining`.
+
+Logs (`log/slog`, text on stderr) can also be tailed live from the module's
+Logs tab in core: the channel declares the `logs` capability and streams
+records only while someone watches (channel-core `pkg/logstream`). A viewer
+may ask for debug records even while `log_level` is `info`; that does not
+change stderr output.
 
 Live values are not persisted by the channel: on every (re-)register core sends
 the effective config and the channel applies it.

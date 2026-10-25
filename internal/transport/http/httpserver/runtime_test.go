@@ -50,11 +50,11 @@ func TestHandler_CoreTimeout(t *testing.T) {
 		http.Error(w, "late", http.StatusInternalServerError)
 	}))
 	defer slow.Close()
-	if d := NewHandler("http-main", CoreConfig{SyncBaseURL: slow.URL}, RuntimeConfig{}); d.syncTimeout != 30*time.Second || d.Config().LogLevel != LogInfo {
+	if d := NewHandler("http-main", CoreConfig{SyncBaseURL: slow.URL}, RuntimeConfig{}); d.syncTimeout != 30*time.Second {
 		t.Fatalf("defaults: timeout=%s config=%+v", d.syncTimeout, d.Config())
 	}
 	h := NewHandler("http-main", CoreConfig{SyncBaseURL: slow.URL, SyncTimeout: 50 * time.Millisecond},
-		RuntimeConfig{MaxBodyBytes: testMaxBody, LogLevel: LogDebug})
+		RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 

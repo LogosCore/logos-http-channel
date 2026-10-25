@@ -16,6 +16,8 @@
 - The control-plane session (connect, serve management, register, heartbeat,
   deregister, reconnect with backoff) now runs on channel-core `pkg/module`;
   `internal/registration` is gone.
+- **Live logs.** Logging moved to `log/slog`; core can tail it from the
+  module's Logs tab (`logs` capability, channel-core `pkg/logstream`).
 - New `CORE_SYNC_TIMEOUT` env (default `30s`): a per-request context timeout
   for core's sync reply, replacing the fixed HTTP client timeout.
 - New `log_level=debug` logs every request outcome.

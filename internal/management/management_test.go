@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,13 +42,20 @@ func TestManifestValid(t *testing.T) {
 
 func newServer(t *testing.T, syncBaseURL string) (*httpserver.Handler, func(protocol.Envelope) protocol.ReplyEnvelope) {
 	t.Helper()
+	h, _, handle := newServerWithLevel(t, syncBaseURL)
+	return h, handle
+}
+
+func newServerWithLevel(t *testing.T, syncBaseURL string) (*httpserver.Handler, *slog.LevelVar, func(protocol.Envelope) protocol.ReplyEnvelope) {
+	t.Helper()
 	cfg := testConfig(syncBaseURL)
 	h := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{SyncBaseURL: cfg.LogosSyncBaseURL}, httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes})
-	s, err := New(cfg, h)
+	var level slog.LevelVar
+	s, err := New(cfg, h, &level)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return h, func(req protocol.Envelope) protocol.ReplyEnvelope { return s.Handle(context.Background(), req) }
+	return h, &level, func(req protocol.Envelope) protocol.ReplyEnvelope { return s.Handle(context.Background(), req) }
 }
 
 func envelope(t *testing.T, typ string, payload any) protocol.Envelope {
@@ -58,7 +66,7 @@ func envelope(t *testing.T, typ string, payload any) protocol.Envelope {
 }
 
 func TestApplyUpdatesHandlerLive(t *testing.T) {
-	h, handle := newServer(t, "http://core:8002")
+	h, level, handle := newServerWithLevel(t, "http://core:8002")
 	// The startup apply (register reply), with nothing managed yet.
 	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{}))
 	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
@@ -74,9 +82,9 @@ func TestApplyUpdatesHandlerLive(t *testing.T) {
 	if len(out.RestartRequired) != 0 || len(out.Rejected) != 0 {
 		t.Errorf("reply = %+v", out)
 	}
-	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096, LogLevel: "debug"}
-	if got := h.Config(); got != want {
-		t.Errorf("config = %+v, want %+v", got, want)
+	want := httpserver.RuntimeConfig{MaxBodyBytes: 4096}
+	if got := h.Config(); got != want || level.Level() != slog.LevelDebug {
+		t.Errorf("config = %+v level = %s, want %+v debug", got, level.Level(), want)
 	}
 
 	// Out-of-range values are rejected and the previous value kept.
@@ -84,7 +92,7 @@ func TestApplyUpdatesHandlerLive(t *testing.T) {
 		ManagementConfig: protocol.ManagementConfig{Revision: 2, Values: map[string]any{"max_body_bytes": 5, "log_level": "trace"}},
 	}))
 	_ = json.Unmarshal(rep.Payload, &out)
-	if len(out.Rejected) != 2 || h.Config().MaxBodyBytes != 4096 || h.Config().LogLevel != "debug" {
+	if len(out.Rejected) != 2 || h.Config().MaxBodyBytes != 4096 || level.Level() != slog.LevelDebug {
 		t.Errorf("rejected = %+v config = %+v", out.Rejected, h.Config())
 	}
 }

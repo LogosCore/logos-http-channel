@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"strings"
@@ -24,12 +24,6 @@ const uuidLen = 16
 // envelopeOverhead bounds the JSON fields around encrypted_data in a core reply.
 const envelopeOverhead = 64 << 10
 
-// Log levels for RuntimeConfig.LogLevel.
-const (
-	LogInfo  = "info"  // log failures only
-	LogDebug = "debug" // also log every request outcome
-)
-
 // CoreConfig is how the handler reaches core. It comes from the env only and
 // is fixed for the process lifetime.
 type CoreConfig struct {
@@ -41,7 +35,6 @@ type CoreConfig struct {
 // RuntimeConfig holds the settings core can change live via management.
 type RuntimeConfig struct {
 	MaxBodyBytes int64
-	LogLevel     string
 }
 
 // Stats is a snapshot of the handler's counters.
@@ -111,9 +104,6 @@ func New(addr string, h *Handler) *http.Server {
 
 // SetConfig replaces the runtime config used by subsequent requests.
 func (h *Handler) SetConfig(cfg RuntimeConfig) {
-	if cfg.LogLevel == "" {
-		cfg.LogLevel = LogInfo
-	}
 	h.cfg.Store(&cfg)
 }
 
@@ -151,30 +141,29 @@ func (h *Handler) Stats() Stats {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cfg := h.cfg.Load()
 	h.requests.Add(1)
-	fail := func(stage string, err error) {
+	// Client mistakes log at info, core trouble at warn.
+	fail := func(level slog.Level, stage string, err error) {
 		h.failed.Add(1)
-		log.Printf("%s: %v", stage, err)
+		slog.Log(r.Context(), level, "request failed", "stage", stage, "err", err, "method", r.Method, "path", r.URL.Path)
 		http.NotFound(w, r)
 	}
 
 	if h.draining.Load() {
 		h.failed.Add(1)
-		if cfg.LogLevel == LogDebug {
-			log.Printf("request %s %s: draining", r.Method, r.URL.Path)
-		}
+		slog.Debug("request refused: draining", "method", r.Method, "path", r.URL.Path)
 		http.NotFound(w, r)
 		return
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes))
 	if err != nil {
-		fail("read body", err)
+		fail(slog.LevelInfo, "read body", err)
 		return
 	}
 
 	id, encryptedData, err := unpack(body)
 	if err != nil {
-		fail("unpack", err)
+		fail(slog.LevelInfo, "unpack", err)
 		return
 	}
 
@@ -206,7 +195,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.coreErrors.Add(1)
 			h.lastCoreErr.Store(&coreError{msg: err.Error(), at: time.Now().UTC()})
 		}
-		fail("core sync", err)
+		fail(slog.LevelWarn, "core sync", err)
 		return
 	}
 
@@ -214,16 +203,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.coreErrors.Add(1)
 		h.lastCoreErr.Store(&coreError{msg: "pack reply: " + err.Error(), at: time.Now().UTC()})
-		fail("pack", err)
+		fail(slog.LevelWarn, "pack", err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = w.Write(resp)
 	h.succeeded.Add(1)
-	if cfg.LogLevel == LogDebug {
-		log.Printf("request %s %s: ok (id=%s)", r.Method, r.URL.Path, id)
-	}
+	slog.Debug("request served", "method", r.Method, "path", r.URL.Path, "id", id)
 }
 
 // NewHealth returns the internal health server. It listens on its own port,

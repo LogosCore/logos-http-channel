@@ -5,12 +5,15 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/lifecycle"
+	"github.com/logoscore/logos-golang-channel-core/v2/pkg/logstream"
 	"github.com/logoscore/logos-golang-channel-core/v2/pkg/module"
 	"github.com/logoscore/logos-http-channel/internal/config"
 	"github.com/logoscore/logos-http-channel/internal/management"
@@ -31,6 +34,12 @@ func main() {
 		log.Fatalf("config load failed: %v", err)
 	}
 
+	// Logs go to stderr at the managed log_level, and to core's live log tail
+	// (which can ask for debug on its own) through the hub.
+	var level slog.LevelVar
+	logs := logstream.New(cfg.ChannelID)
+	slog.SetDefault(slog.New(logs.Handler(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &level}))))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -43,9 +52,9 @@ func main() {
 	srv := httpserver.New(cfg.Listen, handler)
 	// Without management (e.g. an env value the manifest rejects) the channel
 	// still serves and registers; core just cannot manage it.
-	mgmtSrv, err := management.New(cfg, handler)
+	mgmtSrv, err := management.New(cfg, handler, &level)
 	if err != nil {
-		log.Printf("management disabled: %v", err)
+		slog.Warn("management disabled", "err", err)
 	}
 	health := httpserver.NewHealth(cfg.HealthListen)
 	for _, s := range []*http.Server{srv, health} {
@@ -55,8 +64,8 @@ func main() {
 			}
 		}()
 	}
-	log.Printf("logos-http-channel listening on %s, health on %s (channel_id=%s, logos=%s, core_sync_timeout=%s, max_body=%d)",
-		srv.Addr, health.Addr, cfg.ChannelID, cfg.LogosSyncBaseURL, cfg.CoreSyncTimeout, cfg.MaxBodyBytes)
+	slog.Info("logos-http-channel listening", "addr", srv.Addr, "health", health.Addr, "channel_id", cfg.ChannelID,
+		"logos", cfg.LogosSyncBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes)
 
 	// The control-plane session outlives ctx: in-flight requests must drain
 	// while core still treats this instance as registered, so it is stopped
@@ -65,7 +74,7 @@ func main() {
 	regDone := make(chan struct{})
 	go func() {
 		defer close(regDone)
-		err := module.Run(regCtx, module.Config{
+		mc := module.Config{
 			AMQPURL: cfg.RabbitMQURL,
 			Identity: lifecycle.Identity{
 				ModuleType: "channel",
@@ -73,20 +82,24 @@ func main() {
 				Instance:   cfg.ChannelID,
 				Version:    version,
 			},
-			Management: mgmtSrv,
-		})
+		}
+		// The live log tail is served on the management queue.
+		if mgmtSrv != nil {
+			mc.Management, mc.Logs = mgmtSrv, logs
+		}
+		err := module.Run(regCtx, mc)
 		if err != nil {
 			log.Fatalf("control plane: %v", err)
 		}
 	}()
 
 	<-ctx.Done()
-	log.Printf("shutting down")
+	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for _, s := range []*http.Server{srv, health} {
 		if err := s.Shutdown(shutdownCtx); err != nil {
-			log.Printf("shutdown %s: %v", s.Addr, err)
+			slog.Warn("shutdown", "addr", s.Addr, "err", err)
 		}
 	}
 	stopReg()

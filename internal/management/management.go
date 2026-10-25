@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -18,6 +18,12 @@ import (
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	"github.com/logoscore/logos-http-channel/internal/config"
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
+)
+
+// log_level values.
+const (
+	logInfo  = "info"  // failures and lifecycle
+	logDebug = "debug" // also every request outcome
 )
 
 // Property bounds.
@@ -44,8 +50,8 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Key: "log_level", Type: protocol.FieldEnum, Label: "Log level",
 				Description: "info logs failures only; debug also logs every request outcome.",
 				Group:       "Logging", Order: 2,
-				Default: httpserver.LogInfo,
-				Options: []protocol.EnumOption{{Value: httpserver.LogInfo, Label: "Info"}, {Value: httpserver.LogDebug, Label: "Debug"}},
+				Default: logInfo,
+				Options: []protocol.EnumOption{{Value: logInfo, Label: "Info"}, {Value: logDebug, Label: "Debug"}},
 			}, Apply: protocol.ApplyLive},
 		},
 		Actions: []protocol.ActionSpec{
@@ -75,26 +81,27 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 	}
 }
 
-// New builds the management server for h from cfg.
-func New(cfg config.Config, h *httpserver.Handler) (*mgmt.Server, error) {
+// New builds the management server for h from cfg. log_level drives level,
+// the level of the process's own log output.
+func New(cfg config.Config, h *httpserver.Handler, level *slog.LevelVar) (*mgmt.Server, error) {
 	s, err := mgmt.New(Manifest(cfg), mgmt.WithSource(protocol.Source{
 		Service: protocol.ServiceChannel, Instance: cfg.ChannelID,
 	}))
 	if err != nil {
 		return nil, err
 	}
-	s.OnApply(func(ctx context.Context, live map[string]any) error { return apply(ctx, h, live) })
+	s.OnApply(func(ctx context.Context, live map[string]any) error { return apply(ctx, h, level, live) })
 	s.Status(func() map[string]any { return status(h) })
 	s.Action("drain", func(_ context.Context, _ map[string]any, actor *protocol.Actor) (any, error) {
 		was := h.Draining()
 		h.SetDraining(true)
-		log.Printf("management: drain by %s", actorName(actor))
+		slog.Info("management: drained", "by", actorName(actor))
 		return map[string]any{"draining": true, "was_draining": was}, nil
 	})
 	s.Action("resume", func(_ context.Context, _ map[string]any, actor *protocol.Actor) (any, error) {
 		was := h.Draining()
 		h.SetDraining(false)
-		log.Printf("management: resume by %s", actorName(actor))
+		slog.Info("management: resumed", "by", actorName(actor))
 		return map[string]any{"draining": false, "was_draining": was}, nil
 	})
 	s.Action("check_core", func(ctx context.Context, _ map[string]any, _ *protocol.Actor) (any, error) {
@@ -103,22 +110,25 @@ func New(cfg config.Config, h *httpserver.Handler) (*mgmt.Server, error) {
 	return s, nil
 }
 
-// apply maps live property values onto the handler's runtime config.
-func apply(ctx context.Context, h *httpserver.Handler, live map[string]any) error {
+// apply maps live property values onto the handler's runtime config and the
+// log level.
+func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, live map[string]any) error {
 	prev := h.Config()
 	next := prev
 	if n, ok := protocol.AsInt64(live["max_body_bytes"]); ok {
 		next.MaxBodyBytes = n
 	}
-	if lvl, ok := live["log_level"].(string); ok {
-		next.LogLevel = lvl
+	lvl := slog.LevelInfo
+	if live["log_level"] == logDebug {
+		lvl = slog.LevelDebug
 	}
-	if next == prev {
+	if next == prev && level.Level() == lvl {
 		return nil
 	}
 	h.SetConfig(next)
-	log.Printf("management: config applied by %s (max_body=%d log_level=%s)",
-		actorName(mgmt.ActorFromContext(ctx)), next.MaxBodyBytes, next.LogLevel)
+	level.Set(lvl)
+	slog.Info("management: config applied", "by", actorName(mgmt.ActorFromContext(ctx)),
+		"max_body_bytes", next.MaxBodyBytes, "log_level", lvl.String())
 	return nil
 }
 

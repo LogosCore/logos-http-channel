@@ -47,6 +47,8 @@ Control-plane plumbing (reconnect, register/heartbeat/deregister, serving manage
 6. Pack response: random offset, split encrypted_data, embed raw UUID
 7. Return raw bytes (`application/octet-stream`)
 
+**Logging:** `log/slog` only (text handler on stderr, level from the `log_level` property via a `slog.LevelVar`), wrapped by channel-core's `logstream.Hub` so core can tail logs live. Client mistakes log at info, core trouble at warn, per-request outcomes at debug.
+
 **Every failure returns a plain `404 page not found`** (`http.NotFound`); the reason is only logged. Never return other error statuses to clients.
 
 **External dependencies:** `logos-golang-protocol` — canonical envelope types (`InboundMinionMessage`, `OutboundMinionMessage`); `logos-golang-channel-core/v2` — control-plane session (`pkg/module`) and management server (`pkg/mgmt`).
