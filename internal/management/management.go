@@ -20,11 +20,41 @@ import (
 	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
 )
 
-// log_level values.
-const (
-	logInfo  = "info"  // failures and lifecycle
-	logDebug = "debug" // also every request outcome
-)
+// logLevels maps the log_level values onto slog levels, most verbose first.
+// What the channel logs at each: debug every request outcome; info client
+// mistakes, startup and management changes; warn core trouble; error nothing
+// yet.
+var logLevels = []struct {
+	value, label string
+	level        slog.Level
+}{
+	{"debug", "Debug", slog.LevelDebug},
+	{"info", "Info", slog.LevelInfo},
+	{"warn", "Warn", slog.LevelWarn},
+	{"error", "Error", slog.LevelError},
+}
+
+const defaultLogLevel = "info"
+
+// logLevelOptions are the log_level enum options.
+func logLevelOptions() []protocol.EnumOption {
+	out := make([]protocol.EnumOption, len(logLevels))
+	for i, l := range logLevels {
+		out[i] = protocol.EnumOption{Value: l.value, Label: l.label}
+	}
+	return out
+}
+
+// slogLevel returns the slog level for a log_level value; unknown values
+// (never valid against the manifest) fall back to info.
+func slogLevel(v any) slog.Level {
+	for _, l := range logLevels {
+		if l.value == v {
+			return l.level
+		}
+	}
+	return slog.LevelInfo
+}
 
 // Property bounds.
 const (
@@ -48,10 +78,10 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 			}, Apply: protocol.ApplyLive},
 			{FieldSpec: protocol.FieldSpec{
 				Key: "log_level", Type: protocol.FieldEnum, Label: "Log level",
-				Description: "info logs failures only; debug also logs every request outcome.",
+				Description: "Channel output level. debug: every request outcome; info: client errors, startup, management changes; warn: core problems only; error: errors only.",
 				Group:       "Logging", Order: 2,
-				Default: logInfo,
-				Options: []protocol.EnumOption{{Value: logInfo, Label: "Info"}, {Value: logDebug, Label: "Debug"}},
+				Default: defaultLogLevel,
+				Options: logLevelOptions(),
 			}, Apply: protocol.ApplyLive},
 		},
 		Actions: []protocol.ActionSpec{
@@ -118,10 +148,7 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	if n, ok := protocol.AsInt64(live["max_body_bytes"]); ok {
 		next.MaxBodyBytes = n
 	}
-	lvl := slog.LevelInfo
-	if live["log_level"] == logDebug {
-		lvl = slog.LevelDebug
-	}
+	lvl := slogLevel(live["log_level"])
 	if next == prev && level.Level() == lvl {
 		return nil
 	}

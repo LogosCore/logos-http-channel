@@ -20,7 +20,8 @@
   module's Logs tab (`logs` capability, channel-core `pkg/logstream`).
 - New `CORE_SYNC_TIMEOUT` env (default `30s`): a per-request context timeout
   for core's sync reply, replacing the fixed HTTP client timeout.
-- New `log_level=debug` logs every request outcome.
+- `log_level` is `debug` / `info` / `warn` / `error` (default `info`):
+  `debug` adds every request outcome, `warn` keeps only core problems.
 
 ## v3.1.0
 

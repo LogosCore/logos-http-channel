@@ -53,7 +53,7 @@ Properties (defaults are the env values the process started with):
 | Key | Type | Applies | Notes |
 | --- | --- | --- | --- |
 | `max_body_bytes` | bytes | live | 17 to 64 MiB; the core reply limit scales with it |
-| `log_level` | `info` / `debug` | live | stderr level; `debug` also logs every request outcome |
+| `log_level` | `debug` / `info` / `warn` / `error` | live | stderr level, default `info`: `debug` adds every request outcome, `info` client errors, startup and management changes, `warn` core problems only |
 
 How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.

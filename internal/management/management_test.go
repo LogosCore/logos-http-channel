@@ -97,6 +97,41 @@ func TestApplyUpdatesHandlerLive(t *testing.T) {
 	}
 }
 
+func TestLogLevels(t *testing.T) {
+	_, level, handle := newServerWithLevel(t, "http://core:8002")
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{}))
+	for i, c := range []struct {
+		value string
+		want  slog.Level
+	}{
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+	} {
+		rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+			ManagementConfig: protocol.ManagementConfig{Revision: int64(i + 1), Values: map[string]any{"log_level": c.value}},
+		}))
+		var out protocol.ConfigApplyReply
+		if err := json.Unmarshal(rep.Payload, &out); err != nil || len(out.Rejected) != 0 {
+			t.Fatalf("%s: reply = %+v (%v)", c.value, rep, err)
+		}
+		if level.Level() != c.want {
+			t.Errorf("log_level=%s: level = %s, want %s", c.value, level.Level(), c.want)
+		}
+	}
+	// Absent from core's values: back to the default.
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 10, Values: map[string]any{"log_level": "warn"}},
+	}))
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 11},
+	}))
+	if level.Level() != slog.LevelInfo {
+		t.Errorf("cleared log_level: level = %s, want INFO", level.Level())
+	}
+}
+
 func TestDrainResumeAndStatus(t *testing.T) {
 	h, handle := newServer(t, "http://core:8002")
 	invoke := func(action string) protocol.ReplyEnvelope {
