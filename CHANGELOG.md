@@ -5,6 +5,8 @@
 - Registers with a description, shown on core's Modules page: "HTTP
   transport: relays minion messages to core over plain requests and
   WebSocket".
+- Registers with an icon (a globe, `cmd/http-channel/icon.svg`, embedded in
+  the binary), shown in core's UI instead of the default channel icon.
 - Actions are available only when they change something: `drain` while not
   draining, `resume` while draining, `close_connections` while a WebSocket is
   open (`available_when`). Core greys out the others with the reason, and the

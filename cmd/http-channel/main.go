@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"log"
@@ -27,6 +28,11 @@ import (
 // version is the module build version reported at registration; set with
 // -ldflags "-X main.version=...".
 var version = "dev"
+
+// icon is the channel's icon in core's UI, sent at registration.
+//
+//go:embed icon.svg
+var icon string
 
 func main() {
 	var envFile string
@@ -100,6 +106,7 @@ func main() {
 					Instance:    cfg.ChannelID,
 					Version:     version,
 					Description: "HTTP transport: relays minion messages to core over plain requests and WebSocket",
+					Icon:        icon,
 				},
 			},
 			Connection: &connSchema,
