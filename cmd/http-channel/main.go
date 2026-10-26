@@ -95,10 +95,11 @@ func main() {
 			Config: module.Config{
 				AMQPURL: cfg.RabbitMQURL,
 				Identity: lifecycle.Identity{
-					ModuleType: channel.ModuleType,
-					ModuleName: "http",
-					Instance:   cfg.ChannelID,
-					Version:    version,
+					ModuleType:  channel.ModuleType,
+					ModuleName:  "http",
+					Instance:    cfg.ChannelID,
+					Version:     version,
+					Description: "HTTP transport: relays minion messages to core over plain requests and WebSocket",
 				},
 			},
 			Connection: &connSchema,

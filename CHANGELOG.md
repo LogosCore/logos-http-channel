@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Registers with a description, shown on core's Modules page: "HTTP
+  transport: relays minion messages to core over plain requests and
+  WebSocket".
+
 ## v3.4.2
 
 - `LISTEN_ADDR` and `HEALTH_LISTEN_ADDR` accept a bare port (`8080` means
