@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.4.1
+
+- Dependency bump: `logos-golang-channel-core` v3.0.1,
+  `logos-golang-module-core` v0.1.2, `logos-golang-protocol` v0.5.0. No
+  behaviour change.
+
 ## v3.4.0
 
 - **SDK split.** Builds on `logos-golang-module-core` v0.1.0 (control plane,
