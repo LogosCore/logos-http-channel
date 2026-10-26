@@ -167,12 +167,12 @@ default `:8081`). Don't publish that port; reach it only from the Docker network
 Environment variables:
 
 - `CHANNEL_ID` (default: `http-main`)
-- `LISTEN_ADDR` (default: `:8080`)
+- `LISTEN_ADDR` (default: `:8080`) — `host:port`, `:port`, or a bare port (all interfaces)
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
 - `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`
-- `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server
+- `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server, same forms as `LISTEN_ADDR`
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, 17 to 1 GiB
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`
   (defaults: `localhost` / `5672` / `guest` / `guest` / `/`) — core's control-plane broker

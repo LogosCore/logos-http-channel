@@ -102,3 +102,34 @@ func TestLoadFromEnv_LogFormatAndTrustedProxies(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadFromEnv_ListenAddrs(t *testing.T) {
+	for v, want := range map[string]string{
+		"8080":           ":8080",
+		" 8080 ":         ":8080",
+		":9000":          ":9000",
+		"0.0.0.0:8080":   "0.0.0.0:8080",
+		"[::1]:8080":     "[::1]:8080",
+		"localhost:8080": "localhost:8080",
+	} {
+		t.Setenv("LISTEN_ADDR", v)
+		t.Setenv("HEALTH_LISTEN_ADDR", v)
+		cfg, err := LoadFromEnv("")
+		if err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+		if cfg.Listen != want || cfg.HealthListen != want {
+			t.Fatalf("%q: Listen = %q, HealthListen = %q, want %q", v, cfg.Listen, cfg.HealthListen, want)
+		}
+	}
+	for _, key := range []string{"LISTEN_ADDR", "HEALTH_LISTEN_ADDR"} {
+		for _, v := range []string{"localhost", "abc", ":http", ":70000", "70000", "::1:8080"} {
+			t.Setenv("LISTEN_ADDR", ":8080")
+			t.Setenv("HEALTH_LISTEN_ADDR", ":8081")
+			t.Setenv(key, v)
+			if _, err := LoadFromEnv(""); err == nil {
+				t.Fatalf("%s=%q: expected error", key, v)
+			}
+		}
+	}
+}

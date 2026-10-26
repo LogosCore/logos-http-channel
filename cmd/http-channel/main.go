@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -65,10 +66,16 @@ func main() {
 		slog.Warn("management disabled", "err", err)
 	}
 	health := httpserver.NewHealth(cfg.HealthListen)
+	// Listen before saying so: a port that cannot be bound fails here, at
+	// error level, before anything registers with core.
 	for _, s := range []*http.Server{srv, health} {
+		ln, err := net.Listen("tcp", s.Addr)
+		if err != nil {
+			fatal("listen failed", "addr", s.Addr, "err", err)
+		}
 		go func() {
-			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Fatal(err)
+			if err := s.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fatal("server failed", "addr", s.Addr, "err", err)
 			}
 		}()
 	}
@@ -102,7 +109,7 @@ func main() {
 		}
 		err := channel.Run(regCtx, mc)
 		if err != nil {
-			log.Fatalf("control plane: %v", err)
+			fatal("control plane failed", "err", err)
 		}
 	}()
 
@@ -124,4 +131,11 @@ func main() {
 	}
 	stopReg()
 	<-regDone
+}
+
+// fatal logs at error level and exits. log.Fatal would go through slog's
+// default handler at info level once slog.SetDefault has run.
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

@@ -52,9 +52,15 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 
 	cfg := Config{
 		ChannelID:        envOrDefault("CHANNEL_ID", "http-main"),
-		Listen:           envOrDefault("LISTEN_ADDR", ":8080"),
 		LogosSyncBaseURL: envOrDefault("LOGOS_SYNC_BASE_URL", "http://localhost:8002"),
-		HealthListen:     envOrDefault("HEALTH_LISTEN_ADDR", ":8081"),
+	}
+
+	var err error
+	if cfg.Listen, err = listenAddr("LISTEN_ADDR", ":8080"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HealthListen, err = listenAddr("HEALTH_LISTEN_ADDR", ":8081"); err != nil {
+		return Config{}, err
 	}
 
 	maxBody, err := strconv.ParseInt(envOrDefault("MAX_BODY_BYTES", "1048576"), 10, 64)
@@ -95,6 +101,24 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// listenAddr reads a listen address: host:port, :port, or a bare port, which
+// means all interfaces (":port"). Anything else fails here rather than when
+// the server starts listening.
+func listenAddr(key, fallback string) (string, error) {
+	v := strings.TrimSpace(envOrDefault(key, fallback))
+	if _, err := strconv.ParseUint(v, 10, 16); err == nil {
+		v = ":" + v
+	}
+	_, port, err := net.SplitHostPort(v)
+	if err == nil {
+		_, err = strconv.ParseUint(port, 10, 16)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s must be a port or host:port (e.g. :8080), got %q", key, v)
+	}
+	return v, nil
 }
 
 // parsePrefixes parses a comma-separated list of IPs and CIDRs.

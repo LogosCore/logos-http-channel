@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.4.2
+
+- `LISTEN_ADDR` and `HEALTH_LISTEN_ADDR` accept a bare port (`8080` means
+  `:8080`, all interfaces). Any other value that is not `host:port` fails at
+  config load with the variable named, instead of when the server listens.
+- Both ports are bound before `logos-http-channel listening` is logged and
+  before registering with core. A port that cannot be bound exits with an
+  `ERROR` line (`listen failed`).
+- Fatal errors after logging is set up (listen, serve, control plane) are
+  logged at `ERROR`. Before, they went through `log.Fatal`, which slog
+  printed at `INFO`.
+
 ## v3.4.1
 
 - Dependency bump: `logos-golang-channel-core` v3.0.1,
