@@ -5,6 +5,11 @@
 - Registers with a description, shown on core's Modules page: "HTTP
   transport: relays minion messages to core over plain requests and
   WebSocket".
+- Actions are available only when they change something: `drain` while not
+  draining, `resume` while draining, `close_connections` while a WebSocket is
+  open (`available_when`). Core greys out the others with the reason, and the
+  channel refuses them with `action_unavailable`. Needs
+  `logos-golang-protocol` v0.6.0 and `logos-golang-module-core` v0.2.0.
 
 ## v3.4.2
 

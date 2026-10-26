@@ -139,9 +139,13 @@ func TestDrainResumeAndStatus(t *testing.T) {
 			InvocationID: protocol.NewULID(), Action: action,
 		}))
 	}
+	// Nothing to resume, and no WebSocket to close.
+	refused(t, invoke("resume"), "Not draining")
+	refused(t, invoke("close_connections"), "No WebSocket connection is open")
 	if rep := invoke("drain"); rep.Status != protocol.StatusOK || !h.Draining() {
 		t.Fatalf("drain: %+v draining=%v", rep.Error, h.Draining())
 	}
+	refused(t, invoke("drain"), "Already draining")
 
 	ts := httptest.NewServer(h)
 	defer ts.Close()
@@ -165,6 +169,14 @@ func TestDrainResumeAndStatus(t *testing.T) {
 
 	if rep := invoke("resume"); rep.Status != protocol.StatusOK || h.Draining() {
 		t.Fatalf("resume: %+v draining=%v", rep.Error, h.Draining())
+	}
+}
+
+// refused checks that an action was unavailable for reason.
+func refused(t *testing.T, rep protocol.ReplyEnvelope, reason string) {
+	t.Helper()
+	if rep.Error == nil || rep.Error.Code != protocol.CodeActionUnavailable || rep.Error.Message != reason {
+		t.Fatalf("reply %+v, want %s %q", rep.Error, protocol.CodeActionUnavailable, reason)
 	}
 }
 

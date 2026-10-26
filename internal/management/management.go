@@ -1,5 +1,6 @@
 // Package management declares what core may manage on this channel (body
-// limit and log level; drain/resume/check_core actions; request counters) and
+// limit and log level; drain/resume/check_core actions, each available only
+// when it changes something; request counters) and
 // binds it to the client handler. How the channel reaches core (sync URL,
 // timeout) is env-only and deliberately not manageable. Core drives it over the
 // module's rpc_queue via logos-golang-module-core pkg/mgmt.
@@ -114,12 +115,23 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Name: "drain", Label: "Drain", Risk: protocol.RiskHigh,
 				Description: "Stop serving clients: every request and WebSocket handshake gets a 404 until resumed, and open WebSockets are closed. Shown in the Draining status value.",
 				Confirm:     "Clients will receive 404 for every request until the channel is resumed.",
+				AvailableWhen: []protocol.ActionCondition{
+					{Status: "draining", Op: protocol.OpEq, Value: false, Message: "Already draining"},
+				},
 			},
-			{Name: "resume", Label: "Resume", Risk: protocol.RiskLow, Description: "Serve clients again after a drain."},
+			{
+				Name: "resume", Label: "Resume", Risk: protocol.RiskLow, Description: "Serve clients again after a drain.",
+				AvailableWhen: []protocol.ActionCondition{
+					{Status: "draining", Op: protocol.OpEq, Value: true, Message: "Not draining"},
+				},
+			},
 			{
 				Name: "close_connections", Label: "Close WebSockets", Risk: protocol.RiskHigh,
 				Description: "Close every open WebSocket connection after its in-flight messages are answered. Minions may reconnect at once.",
 				Confirm:     "All connected minions will be disconnected.",
+				AvailableWhen: []protocol.ActionCondition{
+					{Status: "ws_connections_open", Op: protocol.OpGt, Value: 0, Message: "No WebSocket connection is open"},
+				},
 			},
 			{
 				Name: "check_core", Label: "Check core", Risk: protocol.RiskLow, TimeoutSeconds: 10,
