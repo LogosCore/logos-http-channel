@@ -107,7 +107,8 @@ when `true`).
 
 At registration the channel also declares what minions are given to reach it
 (`internal/connection`): `base_url` (`http(s)://host[:port]`, no path),
-`host_header`, `sni`, `proxy`, `tls_verify` (default `false`),
+`extra_base_urls` (more addresses in the same form, up to 16, which a minion
+falls back to in order), `host_header`, `sni`, `proxy`, `tls_verify` (default `false`),
 `tls_pin_sha256`, `user_agent`, `headers` (name → value), `request_timeout` (default `40s`;
 keep it above `CORE_SYNC_TIMEOUT`),
 `checkin_interval` (`60s`), `checkin_jitter` (`20` %) and

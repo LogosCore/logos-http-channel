@@ -7,6 +7,10 @@
   WebSocket".
 - Registers with an icon (a globe, `cmd/http-channel/icon.svg`, embedded in
   the binary), shown in core's UI instead of the default channel icon.
+- Minion connection schema: optional `extra_base_urls`, more addresses of the
+  channel in the base URL's form (up to 16), which a minion falls back to in
+  order when the base URL cannot be reached. Still version 2: an optional
+  field does not change what minions built for it read.
 - Actions are available only when they change something: `drain` while not
   draining, `resume` while draining, `close_connections` while a WebSocket is
   open (`available_when`). Core greys out the others with the reason, and the
