@@ -200,7 +200,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	w := &countingWriter{ResponseWriter: rw}
 	// One line per request, written when it ends. Successful requests log at
 	// debug, client mistakes at info, core trouble at warn.
-	rl := &requestLog{id: protocol.NewULID(), start: time.Now(), level: slog.LevelDebug, msg: "request served", outcome: outcomeOK}
+	rl := &requestLog{id: protocol.NewID(), start: time.Now(), level: slog.LevelDebug, msg: "request served", outcome: outcomeOK}
 	defer rl.log(r, w, h.trustedProxies())
 	fail := func(level slog.Level, outcome, stage string, err error) {
 		h.failed.Add(1)

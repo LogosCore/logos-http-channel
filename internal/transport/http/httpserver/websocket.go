@@ -146,7 +146,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 	trusted := h.trustedProxies()
 	c := &wsConn{
 		h:       h,
-		id:      protocol.NewULID(),
+		id:      protocol.NewID(),
 		start:   time.Now(),
 		cfg:     wcfg,
 		maxBody: cfg.MaxBodyBytes,
@@ -322,7 +322,7 @@ func (c *wsConn) run() {
 		}
 		c.inflight.Add(1)
 		c.admitMu.Unlock()
-		c.enqueue(wsJob{messageID: protocol.NewULID(), id: id, enc: enc, size: len(data)})
+		c.enqueue(wsJob{messageID: protocol.NewID(), id: id, enc: enc, size: len(data)})
 	}
 	c.inflight.Wait()
 	c.close(websocket.StatusNormalClosure, "")

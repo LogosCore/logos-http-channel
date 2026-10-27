@@ -61,7 +61,7 @@ func newServerWithLevel(t *testing.T, syncBaseURL string) (*httpserver.Handler, 
 func envelope(t *testing.T, typ string, payload any) protocol.Envelope {
 	t.Helper()
 	raw, _ := json.Marshal(payload)
-	id := protocol.NewULID()
+	id := protocol.NewID()
 	return protocol.Envelope{MessageID: id, CorrelationID: id, Type: typ, Version: protocol.EnvelopeVersionV1, Payload: raw}
 }
 
@@ -136,7 +136,7 @@ func TestDrainResumeAndStatus(t *testing.T) {
 	h, handle := newServer(t, "http://core:8002")
 	invoke := func(action string) protocol.ReplyEnvelope {
 		return handle(envelope(t, protocol.TypeMgmtActionInvoke, protocol.ActionInvokeRequest{
-			InvocationID: protocol.NewULID(), Action: action,
+			InvocationID: protocol.NewID(), Action: action,
 		}))
 	}
 	// Nothing to resume, and no WebSocket to close.

@@ -16,6 +16,9 @@
   open (`available_when`). Core greys out the others with the reason, and the
   channel refuses them with `action_unavailable`. Needs
   `logos-golang-protocol` v0.6.0 and `logos-golang-module-core` v0.2.0.
+- Connection and request ids (`conn_id`, `request_id` in the logs, the message
+  id and `X-Request-Id` sent to core) are UUIDv4 (`protocol.NewID`), the one
+  id format across Logos, instead of ULIDs.
 
 ## v3.4.2
 
