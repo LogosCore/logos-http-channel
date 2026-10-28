@@ -27,7 +27,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, base64-encoded for the envelope
 - Response uses a random offset so the UUID position varies per response
 
-**Entrypoint:** `cmd/http-channel/main.go` — embeds `icon.svg` (the channel's icon in core's UI, sent at registration; `TestIconIsValid` checks it against `protocol.ValidateIcon`), loads config, builds the handler and its management server, starts the client server, the internal health server and the control-plane session (`channel-core/v3/pkg/channel.Run`, which declares the minion connection schema from `internal/connection`). On SIGINT/SIGTERM it drains the servers first, then deregisters.
+**Entrypoint:** `cmd/http-channel/main.go` — embeds `icon.svg` and `icon-light.svg` (the channel's icon in core's UI and the same drawing with heavier lines for light themes, sent at registration as `Icon` and `IconLight`; `TestIconIsValid` checks both against `protocol.ValidateIcon`), loads config, builds the handler and its management server, starts the client server, the internal health server and the control-plane session (`channel-core/v3/pkg/channel.Run`, which declares the minion connection schema from `internal/connection`). On SIGINT/SIGTERM it drains the servers first, then deregisters.
 
 **Internal packages:**
 

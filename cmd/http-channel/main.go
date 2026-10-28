@@ -29,10 +29,17 @@ import (
 // -ldflags "-X main.version=...".
 var version = "dev"
 
-// icon is the channel's icon in core's UI, sent at registration.
+// icon is the channel's icon in core's UI, sent at registration: a browser
+// window in front of a globe, and a request and its response. Line art, so
+// it reads the same light or dark; iconLight is the same drawing with
+// heavier lines for light themes, as light lines on a dark background look
+// heavier than dark ones on a light one.
 //
 //go:embed icon.svg
 var icon string
+
+//go:embed icon-light.svg
+var iconLight string
 
 func main() {
 	var envFile string
@@ -107,6 +114,7 @@ func main() {
 					Version:     version,
 					Description: "HTTP transport: relays minion messages to core over plain requests and WebSocket",
 					Icon:        icon,
+					IconLight:   iconLight,
 				},
 			},
 			Connection: &connSchema,

@@ -5,8 +5,11 @@
 - Registers with a description, shown on core's Modules page: "HTTP
   transport: relays minion messages to core over plain requests and
   WebSocket".
-- Registers with an icon (a globe, `cmd/http-channel/icon.svg`, embedded in
-  the binary), shown in core's UI instead of the default channel icon.
+- Registers with an icon, shown in core's UI instead of the default channel
+  icon: a browser window in front of a globe, and a request and its
+  response, as line art (`cmd/http-channel/icon.svg`, embedded in the
+  binary). `icon-light.svg` is the same drawing with heavier lines, sent as
+  the icon for light themes (`Identity.IconLight`, module-core v0.2.0).
 - Minion connection schema: optional `extra_base_urls`, more addresses of the
   channel in the base URL's form (up to 16), which a minion falls back to in
   order when the base URL cannot be reached. Still version 2: an optional
