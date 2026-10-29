@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `logos-http-channel` is a Go module that implements HTTP transport for Logos minion communication. It receives HTTP requests (any method, any path) containing a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Core's reply is packed back into the same binary format.
 
+It ships only as a Docker image: a `v*` tag builds and publishes it (`.github/workflows/docker-image.yml`). Nothing imports it as a Go module, so the module path has no `/v3` suffix to match the tags, and that is fine.
+
 ## Commands
 
 ```bash
