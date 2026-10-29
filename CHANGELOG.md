@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.6.0
+
+- **The minion id is now the build id**: the channel passes it to core as `Logos-Build-Id`. The minion wire format is unchanged. Needs a core that reads `Logos-Build-Id`, `logos-golang-protocol` v0.7.0, `logos-golang-module-core` v0.2.1 and `logos-golang-channel-core` v3.2.0.
+
 ## v3.5.0
 
 - **Raw-body sync with core.** The minion's ciphertext goes to core as the
