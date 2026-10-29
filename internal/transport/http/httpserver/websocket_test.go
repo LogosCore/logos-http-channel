@@ -18,7 +18,7 @@ type wsCore struct {
 	srv   *httptest.Server
 	delay time.Duration
 
-	mu         sync.Mutex
+	mu        sync.Mutex
 	instances []string
 }
 

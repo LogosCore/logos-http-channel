@@ -25,7 +25,7 @@ go build -o http-channel ./cmd/http-channel # build binary
 ```
 
 - `offset` — position where the 16-byte UUID is embedded within the encrypted payload (0–255)
-- `id` — raw UUIDv4 bytes (16 bytes), formatted as a lowercase UUID string for core (`Logos-Minion-Id`)
+- `id` — raw UUIDv4 bytes (16 bytes), formatted as a lowercase UUID string for core (`Logos-Build-Id`)
 - `encrypted_data` — `enc_part1 + enc_part2` concatenated, sent to core as it is (the request body)
 - Response uses a random offset so the UUID position varies per response
 
@@ -45,7 +45,7 @@ Control-plane plumbing (reconnect, register/heartbeat/deregister, serving manage
 1. Accept any method on any URL path (body capped at `MAX_BODY_BYTES`)
 2. Parse binary body: extract offset, raw UUID, encrypted data parts
 3. Build an `InboundMinionMessage` (formatted UUID string, the ciphertext as bytes)
-4. POST it to `{LOGOS_SYNC_BASE_URL}/api/channel/sync`: the ciphertext as an `application/octet-stream` body, `Logos-Message-Id` / `Logos-Minion-Id` / `Logos-Channel-Instance` headers
+4. POST it to `{LOGOS_SYNC_BASE_URL}/api/channel/sync`: the ciphertext as an `application/octet-stream` body, `Logos-Message-Id` / `Logos-Build-Id` / `Logos-Channel-Instance` headers
 5. Read core's reply with channel-core's `syncclient.ReadReply`: 200 with ciphertext, or 204 with nothing for the minion (403 counts as rejected by core)
 6. Pack response: random offset, split the reply's data, embed raw UUID
 7. Return raw bytes (`application/octet-stream`)

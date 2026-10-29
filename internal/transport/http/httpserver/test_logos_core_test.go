@@ -53,7 +53,7 @@ func readSync(r *http.Request) (protocol.InboundMinionMessage, error) {
 // writeSync answers a sync request: 200 with data for the minion, or 204
 // when there is none.
 func writeSync(w http.ResponseWriter, in protocol.InboundMinionMessage, data []byte) {
-	protocol.OutboundMinionMessage{MessageID: protocol.NewID(), MinionID: in.MinionID, Data: data}.SetHeaders(w.Header())
+	protocol.OutboundMinionMessage{MessageID: protocol.NewID(), BuildID: in.BuildID, Data: data}.SetHeaders(w.Header())
 	if len(data) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return

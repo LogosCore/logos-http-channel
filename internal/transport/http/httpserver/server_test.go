@@ -162,7 +162,7 @@ func TestIntegration_PostSync(t *testing.T) {
 	}
 
 	in := core.LastInbound()
-	if in.MinionID != testUUIDStr || in.ChannelInstance != "http-main" {
+	if in.BuildID != testUUIDStr || in.ChannelInstance != "http-main" {
 		t.Fatalf("core received %+v, want minion %s from http-main", in, testUUIDStr)
 	}
 	if string(in.Data) != "secret-payload" {

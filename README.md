@@ -21,21 +21,21 @@ channel's concern.
 Requests and replies share one layout:
 
 ```
-offset    ciphertext part 1   minion id          ciphertext part 2
+offset    ciphertext part 1   build id           ciphertext part 2
 [1 byte]  [offset bytes]      [16 bytes, raw]    [the rest]
 ```
 
-- **Ciphertext** is part 1 followed by part 2. The minion id sits inside it,
+- **Ciphertext** is part 1 followed by part 2. The build id sits inside it,
   `offset` bytes in (0 to 255, and at most the ciphertext's length), so it has
   no fixed position. A minion should pick a random offset for every message;
   the channel does for every reply.
-- **Minion id** is the 16 bytes of the minion's UUID (its build's
-  `minion_id`), in the order of its canonical text form: the hex digits
+- **Build id** is the 16 bytes of the UUID of the build that made the
+  minion (`build_id`), in the order of its canonical text form: the hex digits
   without dashes, decoded.
 - A message is at least 17 bytes. A request's ciphertext must not be empty,
   and the whole body is at most `max_body_bytes` (1 MiB by default, live).
 
-Example: minion `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
+Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
 `c1 c2 c3 c4 c5`, offset 2:
 
 ```
@@ -51,15 +51,15 @@ Example: minion `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
   `headers`; see [Minion connection schema](#minion-connection-schema)). The
   channel reads only the body.
 - The channel unpacks the message and relays it to core's sync endpoint: the
-  ciphertext as the raw request body, the id as `Logos-Minion-Id` (see the
+  ciphertext as the raw request body, the id as `Logos-Build-Id` (see the
   docs' [Channel ↔ Core: HTTP Sync](https://logoscore.github.io/logos-docs/contracts/channel-core-sync/)).
   Nothing is re-encoded on the way.
 
 ### Replies
 
 - **`200`, `application/octet-stream`**, packed like a request, with core's
-  ciphertext for the minion and the minion's own id. A minion should check
-  that the id is its own.
+  ciphertext for the minion and its build id. A minion should check that
+  the id is its own.
 - **Nothing for the minion** (core's 204) is a `200` too, with an empty
   ciphertext: the offset byte `00` and the id, 17 bytes. Today every reply is
   this one, since core has no tasking yet.

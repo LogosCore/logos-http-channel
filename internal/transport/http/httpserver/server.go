@@ -266,7 +266,7 @@ type relayResult struct {
 func (h *Handler) relay(clientCtx context.Context, messageID, id string, data []byte) relayResult {
 	inbound := protocol.InboundMinionMessage{
 		MessageID:       messageID,
-		MinionID:        id,
+		BuildID:         id,
 		ChannelInstance: h.channelID,
 		Data:            data,
 	}
@@ -298,7 +298,7 @@ func (h *Handler) relay(clientCtx context.Context, messageID, id string, data []
 		}
 	}
 
-	reply, err := pack(outbound.MinionID, outbound.Data)
+	reply, err := pack(outbound.BuildID, outbound.Data)
 	if err != nil {
 		h.recordCoreError("pack reply: " + err.Error())
 		return fail(slog.LevelWarn, outcomeCoreError, "pack", err)
@@ -404,6 +404,6 @@ func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbo
 	if resp.StatusCode == http.StatusForbidden {
 		return protocol.OutboundMinionMessage{}, resp.StatusCode, errRejectedByCore
 	}
-	outbound, err := syncclient.ReadReply(resp, inbound.MinionID, 0)
+	outbound, err := syncclient.ReadReply(resp, inbound.BuildID, 0)
 	return outbound, resp.StatusCode, err
 }
