@@ -8,28 +8,73 @@ Receives HTTP requests (any method, any path) with a binary payload, extracts `i
 
 Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply.
 
-## Binary Wire Format
+## Wire format
 
-Request and response share the same structure:
+This is what a minion speaks to reach core through this channel: plain HTTP
+requests, or [WebSocket](#websocket) frames carrying the same messages. The
+channel never reads or changes the ciphertext. What is inside it (the message
+format and the payload crypto) is between the minion and core, and not this
+channel's concern.
+
+### Message
+
+Requests and replies share one layout:
 
 ```
-[offset:1][enc_part1:offset bytes][id:16 bytes raw UUIDv4][enc_part2:remaining]
+offset    ciphertext part 1   minion id          ciphertext part 2
+[1 byte]  [offset bytes]      [16 bytes, raw]    [the rest]
 ```
 
-- `offset` — byte position where the 16-byte UUID sits within the encrypted payload (0–255)
-- `id` — raw UUIDv4 (16 bytes)
-- `encrypted_data` — `enc_part1 + enc_part2` concatenated
-- Response offset is randomized per response
+- **Ciphertext** is part 1 followed by part 2. The minion id sits inside it,
+  `offset` bytes in (0 to 255, and at most the ciphertext's length), so it has
+  no fixed position. A minion should pick a random offset for every message;
+  the channel does for every reply.
+- **Minion id** is the 16 bytes of the minion's UUID (its build's
+  `minion_id`), in the order of its canonical text form: the hex digits
+  without dashes, decoded.
+- A message is at least 17 bytes. A request's ciphertext must not be empty,
+  and the whole body is at most `max_body_bytes` (1 MiB by default, live).
 
-## Behavior
+Example: minion `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
+`c1 c2 c3 c4 c5`, offset 2:
 
-- Every request on the client port, any method and any path (including
-  `/healthz`), is treated as a minion message.
-- On success: `200` with the packed binary reply (`application/octet-stream`).
-- Core's 204 (nothing for the minion) is a success too: the reply is the packed
-  id alone.
-- On any failure (malformed or oversized body, core unreachable, core error,
-  invalid core reply, draining): a plain `404 page not found`. The reason is only logged.
+```
+02  c1 c2  5b 0c 4f 6e 8a 1d 4c 2b 9e 7f 3d 2a 1b 0c 9e 8f  c3 c4 c5
+```
+
+### Requests
+
+- **Any method, any path, any query string**, on the client port, including
+  `/healthz`: every request is one minion message. The method, path and
+  headers are the minion's choice (its connection settings give it the
+  `base_url`, and optionally `host_header`, `sni`, `user_agent` and extra
+  `headers`; see [Minion connection schema](#minion-connection-schema)). The
+  channel reads only the body.
+- The channel unpacks the message and relays it to core's sync endpoint: the
+  ciphertext as the raw request body, the id as `Logos-Minion-Id` (see the
+  docs' [Channel ↔ Core: HTTP Sync](https://logoscore.github.io/logos-docs/contracts/channel-core-sync/)).
+  Nothing is re-encoded on the way.
+
+### Replies
+
+- **`200`, `application/octet-stream`**, packed like a request, with core's
+  ciphertext for the minion and the minion's own id. A minion should check
+  that the id is its own.
+- **Nothing for the minion** (core's 204) is a `200` too, with an empty
+  ciphertext: the offset byte `00` and the id, 17 bytes. Today every reply is
+  this one, since core has no tasking yet.
+- **Any failure is a plain `404 page not found`**: a malformed or oversized
+  body, the channel draining, core unreachable or refusing the channel (an
+  unregistered or blocked instance), or an invalid reply from core. The reason
+  is only logged, so to anyone else the channel looks like a dead path. A
+  minion treats a 404 as "try again at the next check-in".
+
+### Timing
+
+The channel waits up to `CORE_SYNC_TIMEOUT` (30s by default) for core. A
+minion's `request_timeout` (40s by default) should stay above it, or it gives
+up on replies still on their way. Between messages the minion waits its
+`checkin_interval` with `checkin_jitter`.
 
 ## WebSocket
 
@@ -39,7 +84,7 @@ requests on the same port.
 
 - Each **binary frame** is one message, packed exactly like a request body;
   the reply is one binary frame packed like a response. Each frame is relayed
-  to core like a request (`source.transport: "websocket"`).
+  to core like a request; core does not tell the two apart.
 - Up to `ws_max_inflight` messages per connection are relayed at once. Replies
   carry no id other than the minion UUID, so messages with the **same UUID are
   answered in order**, messages with different UUIDs as soon as core answers:
