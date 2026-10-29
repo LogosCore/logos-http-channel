@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.5.0
 
 - **Raw-body sync with core.** The minion's ciphertext goes to core as the
   request body (`application/octet-stream`), byte for byte, with
