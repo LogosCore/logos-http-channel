@@ -1,8 +1,8 @@
 package httpserver
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -28,31 +28,38 @@ func newTestLogosCore(t *testing.T) *testLogosCore {
 }
 
 func (c *testLogosCore) handleSync(w http.ResponseWriter, r *http.Request) {
-	var in protocol.InboundMinionMessage
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	in, err := readSync(r)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	c.mu.Lock()
 	c.last = in
 	c.mu.Unlock()
+	writeSync(w, in, append([]byte("resp:"), in.Data...))
+}
 
-	var respEnc string
-	if in.EncryptedData != "" {
-		raw, _ := base64.StdEncoding.DecodeString(in.EncryptedData)
-		respEnc = base64.StdEncoding.EncodeToString(append([]byte("resp:"), raw...))
+// readSync reads a sync request the way core does: the ciphertext as the raw
+// body, the ids in headers.
+func readSync(r *http.Request) (protocol.InboundMinionMessage, error) {
+	if r.Header.Get("Content-Type") != protocol.SyncContentType {
+		return protocol.InboundMinionMessage{}, fmt.Errorf("content type %q", r.Header.Get("Content-Type"))
 	}
+	in := protocol.InboundFromHeaders(r.Header)
+	in.Data, _ = io.ReadAll(r.Body)
+	return in, protocol.ValidateInbound(in)
+}
 
-	out := protocol.OutboundMinionMessage{
-		MessageID:     "out-1",
-		Type:          protocol.TypeOutboundMinionMessage,
-		Version:       protocol.VersionV1,
-		Timestamp:     "2026-03-11T00:00:00Z",
-		ID:            in.ID,
-		EncryptedData: respEnc,
+// writeSync answers a sync request: 200 with data for the minion, or 204
+// when there is none.
+func writeSync(w http.ResponseWriter, in protocol.InboundMinionMessage, data []byte) {
+	protocol.OutboundMinionMessage{MessageID: protocol.NewID(), MinionID: in.MinionID, Data: data}.SetHeaders(w.Header())
+	if len(data) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (c *testLogosCore) URL() string { return c.server.URL }

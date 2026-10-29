@@ -7,7 +7,6 @@
 package management
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -267,16 +266,16 @@ type CoreCheck struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// CheckCore POSTs an empty JSON object to core's sync URL. Core answers 400
-// for the invalid envelope, which proves it is reachable; only a transport
-// error or a 5xx counts as unreachable.
+// CheckCore POSTs an empty sync request, with no ids, to core's sync URL.
+// Core answers 400 for the missing headers, which proves it is reachable;
+// only a transport error or a 5xx counts as unreachable.
 func CheckCore(ctx context.Context, client *http.Client, syncURL string) CoreCheck {
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, bytes.NewReader([]byte("{}")))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, http.NoBody)
 	if err != nil {
 		return CoreCheck{Error: err.Error()}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", protocol.SyncContentType)
 	resp, err := client.Do(req)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {

@@ -2,8 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
 // wsCore is a core stub for WebSocket tests: it echoes "resp:"+payload, and a
@@ -22,22 +19,22 @@ type wsCore struct {
 	delay time.Duration
 
 	mu         sync.Mutex
-	transports []string
+	instances []string
 }
 
 func newWSCore(t *testing.T, delay time.Duration) *wsCore {
 	t.Helper()
 	c := &wsCore{delay: delay}
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in protocol.InboundMinionMessage
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		in, err := readSync(r)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		c.mu.Lock()
-		c.transports = append(c.transports, in.Source.Transport)
+		c.instances = append(c.instances, in.ChannelInstance)
 		c.mu.Unlock()
-		raw, _ := base64.StdEncoding.DecodeString(in.EncryptedData)
+		raw := in.Data
 		switch {
 		case strings.HasPrefix(string(raw), "fail"):
 			http.Error(w, "boom", http.StatusInternalServerError)
@@ -45,11 +42,7 @@ func newWSCore(t *testing.T, delay time.Duration) *wsCore {
 		case strings.HasPrefix(string(raw), "slow"):
 			time.Sleep(c.delay)
 		}
-		_ = json.NewEncoder(w).Encode(protocol.OutboundMinionMessage{
-			MessageID: "out", Type: protocol.TypeOutboundMinionMessage, Version: protocol.VersionV1,
-			Timestamp: "2026-03-11T00:00:00Z", ID: in.ID,
-			EncryptedData: base64.StdEncoding.EncodeToString(append([]byte("resp:"), raw...)),
-		})
+		writeSync(w, in, append([]byte("resp:"), raw...))
 	}))
 	t.Cleanup(c.srv.Close)
 	return c
@@ -96,11 +89,10 @@ func recv(t *testing.T, c *websocket.Conn) (string, string) {
 	if typ != websocket.MessageBinary {
 		t.Fatalf("reply type = %v", typ)
 	}
-	id, enc, err := unpack(data)
+	id, raw, err := unpack(data)
 	if err != nil {
 		t.Fatalf("unpack reply: %v", err)
 	}
-	raw, _ := base64.StdEncoding.DecodeString(enc)
 	return id, string(raw)
 }
 
@@ -132,10 +124,10 @@ func TestWebSocketRoundTrip(t *testing.T) {
 		}
 	}
 	core.mu.Lock()
-	transports := append([]string(nil), core.transports...)
+	instances := append([]string(nil), core.instances...)
 	core.mu.Unlock()
-	if len(transports) != 2 || transports[0] != transportWebSocket {
-		t.Errorf("transports at core = %v, want websocket", transports)
+	if len(instances) != 2 || instances[0] != "http-main" {
+		t.Errorf("instances at core = %v, want http-main twice", instances)
 	}
 	st := h.Stats()
 	if st.WSConnectionsOpen != 1 || st.WSConnectionsTotal != 1 || st.WSMessagesTotal != 2 || st.WSMessagesFailed != 0 {

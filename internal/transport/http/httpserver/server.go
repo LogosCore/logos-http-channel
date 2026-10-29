@@ -3,9 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,13 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/logoscore/logos-golang-channel-core/v3/pkg/syncclient"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
 const uuidLen = 16
-
-// envelopeOverhead bounds the JSON fields around encrypted_data in a core reply.
-const envelopeOverhead = 64 << 10
 
 // CoreConfig is how the handler reaches core. It comes from the env only and
 // is fixed for the process lifetime.
@@ -232,13 +228,13 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, encryptedData, err := unpack(body)
+	id, data, err := unpack(body)
 	if err != nil {
 		fail(slog.LevelInfo, outcomeBadRequest, "unpack", err)
 		return
 	}
 
-	res := h.relay(r.Context(), rl.id, transportHTTP, id, encryptedData, cfg.MaxBodyBytes)
+	res := h.relay(r.Context(), rl.id, id, data)
 	rl.coreStatus, rl.coreTime = res.coreStatus, res.coreTime
 	if res.err != nil {
 		fail(res.level, res.outcome, res.stage, res.err)
@@ -249,12 +245,6 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(res.reply)
 	h.succeeded.Add(1)
 }
-
-// Transport identifiers sent to core in source.transport.
-const (
-	transportHTTP      = "http"
-	transportWebSocket = "websocket"
-)
 
 // relayResult is the outcome of one message's round trip to core. On failure
 // err is set with the level, outcome and stage to log it under.
@@ -271,34 +261,29 @@ type relayResult struct {
 
 // relay sends one unpacked message to core and packs the reply: the part
 // both transports share. clientCtx ends when the client goes away; core
-// error counters are kept here, per-transport counters by the caller.
-func (h *Handler) relay(clientCtx context.Context, messageID, transport, id, encryptedData string, maxBodyBytes int64) relayResult {
+// error counters are kept here, per-transport counters by the caller. data
+// is the minion's ciphertext, sent to core as it is.
+func (h *Handler) relay(clientCtx context.Context, messageID, id string, data []byte) relayResult {
 	inbound := protocol.InboundMinionMessage{
-		MessageID: messageID,
-		Type:      protocol.TypeInboundMinionMessage,
-		Version:   protocol.VersionV1,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Source: protocol.SourceInfo{
-			Module:         "channel",
-			ModuleInstance: h.channelID,
-			Transport:      transport,
-			Tenant:         "default",
-		},
-		ID:            id,
-		EncryptedData: encryptedData,
+		MessageID:       messageID,
+		MinionID:        id,
+		ChannelInstance: h.channelID,
+		Data:            data,
 	}
-
-	ctx, cancel := context.WithTimeout(clientCtx, h.syncTimeout)
-	defer cancel()
-	// Core returns encrypted_data base64-encoded (4/3 of the raw size).
-	maxReplyBytes := 2*maxBodyBytes + envelopeOverhead
-	coreStart := time.Now()
-	outbound, coreStatus, err := syncWithCore(ctx, h.client, h.syncURL, maxReplyBytes, inbound, messageID)
-	res := relayResult{coreStatus: coreStatus, coreTime: max(time.Since(coreStart), time.Microsecond)}
+	var res relayResult
 	fail := func(level slog.Level, outcome, stage string, err error) relayResult {
 		res.level, res.outcome, res.stage, res.err = level, outcome, stage, err
 		return res
 	}
+	if err := protocol.ValidateInbound(inbound); err != nil {
+		return fail(slog.LevelInfo, outcomeBadRequest, "unpack", err)
+	}
+
+	ctx, cancel := context.WithTimeout(clientCtx, h.syncTimeout)
+	defer cancel()
+	coreStart := time.Now()
+	outbound, coreStatus, err := syncWithCore(ctx, h.client, h.syncURL, inbound)
+	res.coreStatus, res.coreTime = coreStatus, max(time.Since(coreStart), time.Microsecond)
 	if err != nil {
 		switch {
 		case errors.Is(err, errRejectedByCore):
@@ -313,7 +298,7 @@ func (h *Handler) relay(clientCtx context.Context, messageID, transport, id, enc
 		}
 	}
 
-	reply, err := pack(outbound.ID, outbound.EncryptedData)
+	reply, err := pack(outbound.MinionID, outbound.Data)
 	if err != nil {
 		h.recordCoreError("pack reply: " + err.Error())
 		return fail(slog.LevelWarn, outcomeCoreError, "pack", err)
@@ -338,15 +323,16 @@ func NewHealth(addr string) *http.Server {
 }
 
 // unpack parses: [offset:1][enc_part1:offset][id:16][enc_part2:rest]
-// It reuses body's memory, so body is garbage afterwards.
-func unpack(body []byte) (id string, encryptedData string, err error) {
+// It reuses body's memory, so body is garbage afterwards; data is a slice of
+// it.
+func unpack(body []byte) (id string, data []byte, err error) {
 	if len(body) < 1+uuidLen {
-		return "", "", fmt.Errorf("body too short: need at least %d bytes", 1+uuidLen)
+		return "", nil, fmt.Errorf("body too short: need at least %d bytes", 1+uuidLen)
 	}
 
 	offset := int(body[0])
 	if 1+offset+uuidLen > len(body) {
-		return "", "", fmt.Errorf("invalid offset %d for body length %d", offset, len(body))
+		return "", nil, fmt.Errorf("invalid offset %d for body length %d", offset, len(body))
 	}
 
 	rawID := body[1+offset : 1+offset+uuidLen]
@@ -356,26 +342,15 @@ func unpack(body []byte) (id string, encryptedData string, err error) {
 
 	// Join the two parts in place over the UUID (already formatted) rather
 	// than copying the payload once more.
-	enc := append(body[1:1+offset], encPart2...)
-	if len(enc) > 0 {
-		encryptedData = base64.StdEncoding.EncodeToString(enc)
-	}
-	return id, encryptedData, nil
+	data = append(body[1:1+offset], encPart2...)
+	return id, data, nil
 }
 
 // pack builds: [offset:1][enc_part1:offset][id:16][enc_part2:rest]
-func pack(id string, encryptedData string) ([]byte, error) {
+func pack(id string, encBytes []byte) ([]byte, error) {
 	rawID, err := parseUUID(id)
 	if err != nil {
 		return nil, err
-	}
-
-	var encBytes []byte
-	if encryptedData != "" {
-		encBytes, err = base64.StdEncoding.DecodeString(encryptedData)
-		if err != nil {
-			return nil, fmt.Errorf("invalid base64 encrypted_data: %w", err)
-		}
 	}
 
 	maxOffset := len(encBytes)
@@ -408,21 +383,17 @@ func parseUUID(s string) ([]byte, error) {
 	return hex.DecodeString(clean)
 }
 
-// syncWithCore posts inbound to core and returns its reply and HTTP status
-// (0 when no response arrived). requestID is sent as X-Request-Id so core's
-// logs can be matched with the channel's.
-func syncWithCore(ctx context.Context, client *http.Client, syncURL string, maxReplyBytes int64, inbound protocol.InboundMinionMessage, requestID string) (protocol.OutboundMinionMessage, int, error) {
-	payload, err := json.Marshal(inbound)
+// syncWithCore posts inbound to core, the ciphertext as the raw body, and
+// returns its reply and HTTP status (0 when no response arrived). The
+// message id doubles as X-Request-Id so core's logs can be matched with the
+// channel's.
+func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbound protocol.InboundMinionMessage) (protocol.OutboundMinionMessage, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, bytes.NewReader(inbound.Data))
 	if err != nil {
 		return protocol.OutboundMinionMessage{}, 0, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, syncURL, bytes.NewReader(payload))
-	if err != nil {
-		return protocol.OutboundMinionMessage{}, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Request-Id", requestID)
+	inbound.SetHeaders(req.Header)
+	req.Header.Set("X-Request-Id", inbound.MessageID)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -433,13 +404,6 @@ func syncWithCore(ctx context.Context, client *http.Client, syncURL string, maxR
 	if resp.StatusCode == http.StatusForbidden {
 		return protocol.OutboundMinionMessage{}, resp.StatusCode, errRejectedByCore
 	}
-	if resp.StatusCode != http.StatusOK {
-		return protocol.OutboundMinionMessage{}, resp.StatusCode, fmt.Errorf("core sync returned %d", resp.StatusCode)
-	}
-
-	var outbound protocol.OutboundMinionMessage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReplyBytes)).Decode(&outbound); err != nil {
-		return protocol.OutboundMinionMessage{}, resp.StatusCode, err
-	}
-	return outbound, resp.StatusCode, nil
+	outbound, err := syncclient.ReadReply(resp, inbound.MinionID, 0)
+	return outbound, resp.StatusCode, err
 }

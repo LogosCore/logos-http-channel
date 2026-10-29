@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"bytes"
-	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,14 +39,13 @@ func TestUnpack_Valid(t *testing.T) {
 	encData := []byte("hello-encrypted")
 	payload := buildPayload(5, encData, testUUID)
 
-	id, enc, err := unpack(payload)
+	id, decoded, err := unpack(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != testUUIDStr {
 		t.Fatalf("id = %s, want %s", id, testUUIDStr)
 	}
-	decoded, _ := base64.StdEncoding.DecodeString(enc)
 	if string(decoded) != "hello-encrypted" {
 		t.Fatalf("encrypted_data = %s, want hello-encrypted", string(decoded))
 	}
@@ -57,14 +55,13 @@ func TestUnpack_ZeroOffset(t *testing.T) {
 	encData := []byte("payload")
 	payload := buildPayload(0, encData, testUUID)
 
-	id, enc, err := unpack(payload)
+	id, decoded, err := unpack(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != testUUIDStr {
 		t.Fatalf("id = %s, want %s", id, testUUIDStr)
 	}
-	decoded, _ := base64.StdEncoding.DecodeString(enc)
 	if string(decoded) != "payload" {
 		t.Fatalf("encrypted_data = %s, want payload", string(decoded))
 	}
@@ -77,14 +74,13 @@ func TestUnpack_MaxOffset(t *testing.T) {
 	}
 	payload := buildPayload(255, encData, testUUID)
 
-	id, enc, err := unpack(payload)
+	id, decoded, err := unpack(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != testUUIDStr {
 		t.Fatalf("id = %s, want %s", id, testUUIDStr)
 	}
-	decoded, _ := base64.StdEncoding.DecodeString(enc)
 	if !bytes.Equal(decoded, encData) {
 		t.Fatalf("encrypted_data length = %d, want %d", len(decoded), len(encData))
 	}
@@ -100,7 +96,7 @@ func TestUnpack_NoEncryptedData(t *testing.T) {
 	if id != testUUIDStr {
 		t.Fatalf("id = %s, want %s", id, testUUIDStr)
 	}
-	if enc != "" {
+	if len(enc) != 0 {
 		t.Fatalf("encrypted_data = %q, want empty", enc)
 	}
 }
@@ -123,10 +119,9 @@ func TestUnpack_InvalidOffset(t *testing.T) {
 
 func TestPackUnpack_RoundTrip(t *testing.T) {
 	encData := []byte("round-trip-test-data")
-	encB64 := base64.StdEncoding.EncodeToString(encData)
 
 	for i := 0; i < 50; i++ {
-		packed, err := pack(testUUIDStr, encB64)
+		packed, err := pack(testUUIDStr, encData)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,9 +133,8 @@ func TestPackUnpack_RoundTrip(t *testing.T) {
 		if gotID != testUUIDStr {
 			t.Fatalf("iteration %d: id = %s, want %s", i, gotID, testUUIDStr)
 		}
-		decoded, _ := base64.StdEncoding.DecodeString(gotEnc)
-		if string(decoded) != string(encData) {
-			t.Fatalf("iteration %d: data = %s, want %s", i, string(decoded), string(encData))
+		if string(gotEnc) != string(encData) {
+			t.Fatalf("iteration %d: data = %s, want %s", i, string(gotEnc), string(encData))
 		}
 	}
 }
@@ -168,12 +162,11 @@ func TestIntegration_PostSync(t *testing.T) {
 	}
 
 	in := core.LastInbound()
-	if in.ID != testUUIDStr {
-		t.Fatalf("core received id = %s, want %s", in.ID, testUUIDStr)
+	if in.MinionID != testUUIDStr || in.ChannelInstance != "http-main" {
+		t.Fatalf("core received %+v, want minion %s from http-main", in, testUUIDStr)
 	}
-	inDecoded, _ := base64.StdEncoding.DecodeString(in.EncryptedData)
-	if string(inDecoded) != "secret-payload" {
-		t.Fatalf("core received encrypted_data = %s, want secret-payload", string(inDecoded))
+	if string(in.Data) != "secret-payload" {
+		t.Fatalf("core received data = %s, want secret-payload", string(in.Data))
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
@@ -184,9 +177,8 @@ func TestIntegration_PostSync(t *testing.T) {
 	if gotID != testUUIDStr {
 		t.Fatalf("response id = %s, want %s", gotID, testUUIDStr)
 	}
-	respDecoded, _ := base64.StdEncoding.DecodeString(gotEnc)
-	if string(respDecoded) != "resp:secret-payload" {
-		t.Fatalf("response encrypted_data = %s, want resp:secret-payload", string(respDecoded))
+	if string(gotEnc) != "resp:secret-payload" {
+		t.Fatalf("response data = %s, want resp:secret-payload", string(gotEnc))
 	}
 }
 

@@ -276,7 +276,7 @@ type wsConn struct {
 type wsJob struct {
 	messageID string
 	id        string
-	enc       string
+	data      []byte
 	size      int
 }
 
@@ -322,7 +322,7 @@ func (c *wsConn) run() {
 		}
 		c.inflight.Add(1)
 		c.admitMu.Unlock()
-		c.enqueue(wsJob{messageID: protocol.NewID(), id: id, enc: enc, size: len(data)})
+		c.enqueue(wsJob{messageID: protocol.NewID(), id: id, data: enc, size: len(data)})
 	}
 	c.inflight.Wait()
 	c.close(websocket.StatusNormalClosure, "")
@@ -383,7 +383,7 @@ func (c *wsConn) process(job wsJob) {
 		c.inflight.Done()
 	}()
 	start := time.Now()
-	res := c.h.relay(c.ctx, job.messageID, transportWebSocket, job.id, job.enc, c.maxBody)
+	res := c.h.relay(c.ctx, job.messageID, job.id, job.data)
 	c.h.ws.messages.Add(1)
 	ml := wsMessageLog{connID: c.id, messageID: job.messageID, start: start, size: job.size, res: res}
 	if res.err != nil {

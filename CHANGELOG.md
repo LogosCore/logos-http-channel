@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Raw-body sync with core.** The minion's ciphertext goes to core as the
+  request body (`application/octet-stream`), byte for byte, with
+  `Logos-Message-Id`, `Logos-Minion-Id` and `Logos-Channel-Instance` headers,
+  instead of base64 in a JSON envelope; core's reply is read the same way
+  (200 with ciphertext, 204 with nothing for the minion). A third less on the
+  wire to core and no base64 or JSON copies of the payload. The `check_core`
+  action probes with an empty sync request. Needs a core that speaks the
+  raw-body sync, `logos-golang-protocol` v0.6.0 and channel-core's
+  `syncclient.ReadReply`.
 - Registers with a description, shown on core's Modules page: "HTTP
   transport: relays minion messages to core over plain requests and
   WebSocket".

@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -213,11 +212,10 @@ func TestRequestLogSkippedWhenDisabled(t *testing.T) {
 
 func TestUnpackInPlace(t *testing.T) {
 	body := buildPayload(3, []byte("abcdef"), testUUID) // "abc" before the UUID, "def" after
-	id, enc, err := unpack(body)
+	id, raw, err := unpack(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := base64.StdEncoding.DecodeString(enc)
 	if string(raw) != "abcdef" || id != formatUUID(testUUID) {
 		t.Errorf("unpack = %q %q", id, raw)
 	}

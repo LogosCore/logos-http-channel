@@ -4,9 +4,9 @@ HTTP channel module for Logos.
 
 ## Purpose
 
-Receives HTTP requests (any method, any path) with a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, builds a canonical envelope, and forwards it to the Logos core sync endpoint. Disassembles the outbound envelope back into the same binary format for the response.
+Receives HTTP requests (any method, any path) with a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Packs core's reply back into the same binary format for the response.
 
-Uses `github.com/logoscore/logos-golang-protocol` for canonical envelope types.
+Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply.
 
 ## Binary Wire Format
 
@@ -26,7 +26,9 @@ Request and response share the same structure:
 - Every request on the client port, any method and any path (including
   `/healthz`), is treated as a minion message.
 - On success: `200` with the packed binary reply (`application/octet-stream`).
-- On any failure (malformed or oversized body, core unreachable, core non-200,
+- Core's 204 (nothing for the minion) is a success too: the reply is the packed
+  id alone.
+- On any failure (malformed or oversized body, core unreachable, core error,
   invalid core reply, draining): a plain `404 page not found`. The reason is only logged.
 
 ## WebSocket
