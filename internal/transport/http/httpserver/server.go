@@ -61,6 +61,11 @@ type coreError struct {
 // errRejectedByCore marks a 403 from core.
 var errRejectedByCore = errors.New("core sync returned 403")
 
+// errMessageRefused marks core refusing the minion's message itself: one it
+// does not open (422) or has seen before (409). The client's doing, not a
+// core error; the client gets the 404 any failure gets.
+var errMessageRefused = errors.New("core refused the message")
+
 // Handler is the client-facing message handler. Its runtime config is read
 // per request, so SetConfig takes effect without a restart. It is a bare
 // handler, not a ServeMux: the mux answers unclean paths with redirects, and
@@ -288,6 +293,8 @@ func (h *Handler) relay(clientCtx context.Context, messageID, id, peer string, d
 	res.coreStatus, res.coreTime = coreStatus, max(time.Since(coreStart), time.Microsecond)
 	if err != nil {
 		switch {
+		case errors.Is(err, errMessageRefused):
+			return fail(slog.LevelInfo, outcomeRefused, "core sync", err)
 		case errors.Is(err, errRejectedByCore):
 			h.rejected.Add(1)
 			return fail(slog.LevelWarn, outcomeRejectedByCore, "core sync", err)
@@ -403,8 +410,11 @@ func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbo
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusForbidden {
+	switch resp.StatusCode {
+	case http.StatusForbidden:
 		return protocol.OutboundMinionMessage{}, resp.StatusCode, errRejectedByCore
+	case http.StatusUnprocessableEntity, http.StatusConflict:
+		return protocol.OutboundMinionMessage{}, resp.StatusCode, fmt.Errorf("%w: status %d", errMessageRefused, resp.StatusCode)
 	}
 	outbound, err := syncclient.ReadReply(resp, inbound.BuildID, 0)
 	return outbound, resp.StatusCode, err

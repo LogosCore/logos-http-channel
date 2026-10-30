@@ -19,6 +19,7 @@ const (
 	outcomeTooLarge       = "too_large"        // body or frame over max_body_bytes
 	outcomeCoreError      = "core_error"       // core unreachable, non-200 or bad reply
 	outcomeRejectedByCore = "rejected_by_core" // core answered 403: not registered
+	outcomeRefused        = "refused"          // core refused the message: 422 (does not open) or 409 (a replay)
 	outcomeClientGone     = "client_gone"      // the client left while core was answering
 	// WebSocket only.
 	outcomeTooManyConnections = "too_many_connections" // ws_max_connections reached

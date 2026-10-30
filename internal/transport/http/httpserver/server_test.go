@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -297,6 +298,28 @@ func TestCoreFailure_NotFound(t *testing.T) {
 		}
 		assertPlain404(t, resp, name)
 		ts.Close()
+	}
+}
+
+// A message core refuses (422: it does not open; 409: a replay) gets the
+// same 404 as any failure, and is the client's doing, not a core error.
+func TestRefusedMessage_NotFound(t *testing.T) {
+	for _, status := range []int{http.StatusUnprocessableEntity, http.StatusConflict} {
+		core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"error":"no"}`, status)
+		}))
+		h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+		ts := httptest.NewServer(New(":0", h).Handler)
+		resp, err := http.Post(ts.URL+"/x", "application/octet-stream", bytes.NewReader(buildPayload(2, []byte("test"), testUUID)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPlain404(t, resp, fmt.Sprint(status))
+		if st := h.Stats(); st.FailedTotal != 1 || st.CoreErrorsTotal != 0 {
+			t.Errorf("%d: stats %+v", status, st)
+		}
+		ts.Close()
+		core.Close()
 	}
 }
 
