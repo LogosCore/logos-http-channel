@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.7.0
+
+- **The client's address goes to core** as `Logos-Peer-Address` with every message: the peer, or the client a proxy in `TRUSTED_PROXIES` forwarded for (a WebSocket's, its handshake's). Core keeps it as the session's external address.
+- **Core refusing a message is the client's doing**: a `422` (the message does not open) or `409` (a replay) from core is logged at info as `refused`, not counted as a core error. The client gets the same 404 as for any failure.
+- Needs `logos-golang-protocol` v0.8.0, `logos-golang-module-core` v0.2.2 and `logos-golang-channel-core` v3.2.1.
+
 ## v3.6.0
 
 - **The minion id is now the build id**: the channel passes it to core as `Logos-Build-Id`. The minion wire format is unchanged. Needs a core that reads `Logos-Build-Id`, `logos-golang-protocol` v0.7.0, `logos-golang-module-core` v0.2.1 and `logos-golang-channel-core` v3.2.0.
