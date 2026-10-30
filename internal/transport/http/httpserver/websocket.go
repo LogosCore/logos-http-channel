@@ -147,6 +147,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 	c := &wsConn{
 		h:       h,
 		id:      protocol.NewID(),
+		peer:    peerAddress(r, trusted),
 		start:   time.Now(),
 		cfg:     wcfg,
 		maxBody: cfg.MaxBodyBytes,
@@ -244,6 +245,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 type wsConn struct {
 	h       *Handler
 	id      string
+	peer    string // the client's address, for every message (peerAddress)
 	start   time.Time
 	cfg     WebSocketConfig
 	maxBody int64
@@ -383,7 +385,7 @@ func (c *wsConn) process(job wsJob) {
 		c.inflight.Done()
 	}()
 	start := time.Now()
-	res := c.h.relay(c.ctx, job.messageID, job.id, job.data)
+	res := c.h.relay(c.ctx, job.messageID, job.id, c.peer, job.data)
 	c.h.ws.messages.Add(1)
 	ml := wsMessageLog{connID: c.id, messageID: job.messageID, start: start, size: job.size, res: res}
 	if res.err != nil {

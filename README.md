@@ -51,8 +51,11 @@ Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
   `headers`; see [Minion connection schema](#minion-connection-schema)). The
   channel reads only the body.
 - The channel unpacks the message and relays it to core's sync endpoint: the
-  ciphertext as the raw request body, the id as `Logos-Build-Id` (see the
-  docs' [Channel ↔ Core: HTTP Sync](https://logoscore.github.io/logos-docs/contracts/channel-core-sync/)).
+  ciphertext as the raw request body, the id as `Logos-Build-Id`, and the
+  client's IP address as `Logos-Peer-Address` (the peer, or the client a
+  trusted proxy forwarded for: `TRUSTED_PROXIES`; for a WebSocket, the
+  handshake's, on every frame). See the docs' [Channel ↔ Core: HTTP
+  Sync](https://logoscore.github.io/logos-docs/contracts/channel-core-sync/).
   Nothing is re-encoded on the way.
 
 ### Replies
@@ -219,7 +222,7 @@ Environment variables:
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
-- `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`
+- `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`, which is also what core gets as the message's `Logos-Peer-Address` (the session's external address). Behind a redirector or CDN, list it here and have it forward `X-Forwarded-For`, or every session shows the redirector's address
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server, same forms as `LISTEN_ADDR`
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, 17 to 1 GiB
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`

@@ -94,6 +94,16 @@ func clientAttrs(r *http.Request, trusted []netip.Prefix) []slog.Attr {
 // ms is d in milliseconds with microsecond precision.
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
+// peerAddress is clientIP as core gets it (Logos-Peer-Address): an IP
+// address, or "" when the peer or its proxy named something else.
+func peerAddress(r *http.Request, trusted []netip.Prefix) string {
+	a, err := netip.ParseAddr(clientIP(r, trusted))
+	if err != nil {
+		return ""
+	}
+	return a.Unmap().String()
+}
+
 // clientIP is the peer address, or, when the peer is a trusted proxy, the
 // client it forwarded for: the rightmost X-Forwarded-For entry that is not
 // itself a trusted proxy, else X-Real-IP. Headers from untrusted peers are

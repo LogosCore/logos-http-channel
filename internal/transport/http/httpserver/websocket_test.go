@@ -20,6 +20,7 @@ type wsCore struct {
 
 	mu        sync.Mutex
 	instances []string
+	peers     []string
 }
 
 func newWSCore(t *testing.T, delay time.Duration) *wsCore {
@@ -33,6 +34,7 @@ func newWSCore(t *testing.T, delay time.Duration) *wsCore {
 		}
 		c.mu.Lock()
 		c.instances = append(c.instances, in.ChannelInstance)
+		c.peers = append(c.peers, in.PeerAddress)
 		c.mu.Unlock()
 		raw := in.Data
 		switch {
@@ -125,9 +127,14 @@ func TestWebSocketRoundTrip(t *testing.T) {
 	}
 	core.mu.Lock()
 	instances := append([]string(nil), core.instances...)
+	peers := append([]string(nil), core.peers...)
 	core.mu.Unlock()
 	if len(instances) != 2 || instances[0] != "http-main" {
 		t.Errorf("instances at core = %v, want http-main twice", instances)
+	}
+	// Every frame carries the address the connection came from.
+	if len(peers) != 2 || peers[0] != "127.0.0.1" || peers[1] != "127.0.0.1" {
+		t.Errorf("peer addresses at core = %v, want 127.0.0.1 twice", peers)
 	}
 	st := h.Stats()
 	if st.WSConnectionsOpen != 1 || st.WSConnectionsTotal != 1 || st.WSMessagesTotal != 2 || st.WSMessagesFailed != 0 {

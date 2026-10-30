@@ -195,6 +195,28 @@ func TestClientIP(t *testing.T) {
 	}
 }
 
+// What core gets in Logos-Peer-Address: an IP address or nothing.
+func TestPeerAddress(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	for _, c := range []struct{ remote, xff, want string }{
+		{"203.0.113.5:4000", "", "203.0.113.5"},
+		{"[::ffff:203.0.113.5]:4000", "", "203.0.113.5"},
+		{"[2001:db8::1]:4000", "", "2001:db8::1"},
+		{"10.0.0.2:4000", "198.51.100.9", "198.51.100.9"},
+		{"10.0.0.2:4000", "unknown", ""}, // the proxy named no address
+		{"203.0.113.5:4000", "198.51.100.9", "203.0.113.5"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = c.remote
+		if c.xff != "" {
+			r.Header.Set("X-Forwarded-For", c.xff)
+		}
+		if got := peerAddress(r, trusted); got != c.want {
+			t.Errorf("%s via %q: %q, want %q", c.remote, c.xff, got, c.want)
+		}
+	}
+}
+
 func TestRequestLogSkippedWhenDisabled(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

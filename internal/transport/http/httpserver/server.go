@@ -234,7 +234,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := h.relay(r.Context(), rl.id, id, data)
+	res := h.relay(r.Context(), rl.id, id, peerAddress(r, h.trustedProxies()), data)
 	rl.coreStatus, rl.coreTime = res.coreStatus, res.coreTime
 	if res.err != nil {
 		fail(res.level, res.outcome, res.stage, res.err)
@@ -261,13 +261,15 @@ type relayResult struct {
 
 // relay sends one unpacked message to core and packs the reply: the part
 // both transports share. clientCtx ends when the client goes away; core
-// error counters are kept here, per-transport counters by the caller. data
-// is the minion's ciphertext, sent to core as it is.
-func (h *Handler) relay(clientCtx context.Context, messageID, id string, data []byte) relayResult {
+// error counters are kept here, per-transport counters by the caller. peer
+// is the client's address (peerAddress), "" when unknown. data is the
+// minion's ciphertext, sent to core as it is.
+func (h *Handler) relay(clientCtx context.Context, messageID, id, peer string, data []byte) relayResult {
 	inbound := protocol.InboundMinionMessage{
 		MessageID:       messageID,
 		BuildID:         id,
 		ChannelInstance: h.channelID,
+		PeerAddress:     peer,
 		Data:            data,
 	}
 	var res relayResult
