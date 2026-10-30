@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.7.2
+
+- Dependencies: `logos-golang-protocol` v0.10.0, `logos-golang-module-core` v0.2.4, `logos-golang-channel-core` v3.2.4. No change in behavior.
+
 ## v3.7.1
 
 - Dependencies: `logos-golang-protocol` v0.9.0, `logos-golang-module-core` v0.2.3, `logos-golang-channel-core` v3.2.2. No change in behavior.
