@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.7.1
+
+- Dependencies: `logos-golang-protocol` v0.9.0, `logos-golang-module-core` v0.2.3, `logos-golang-channel-core` v3.2.2. No change in behavior.
+
 ## v3.7.0
 
 - **The client's address goes to core** as `Logos-Peer-Address` with every message: the peer, or the client a proxy in `TRUSTED_PROXIES` forwarded for (a WebSocket's, its handshake's). Core keeps it as the session's external address.
