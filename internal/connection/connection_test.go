@@ -20,7 +20,7 @@ func TestSchemaValues(t *testing.T) {
 		"headers":         map[string]any{"X-Forwarded-Host": "cdn.example.com"},
 		"tls_pin_sha256":  "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee",
 	}
-	if p := protocol.ValidateConnectionValues(s, good); p != nil {
+	if p := protocol.ValidateConnectionValues(s, protocol.KindReverseCall, good); p != nil {
 		t.Fatalf("valid values: %v", p)
 	}
 	tooMany := make([]any, maxExtraBaseURLs+1)
@@ -35,12 +35,25 @@ func TestSchemaValues(t *testing.T) {
 		"request_timeout": "500ms",
 	} {
 		vals := map[string]any{"base_url": "https://edge.example.com", key: v}
-		if p := protocol.ValidateConnectionValues(s, vals); p[key] == "" {
+		if p := protocol.ValidateConnectionValues(s, protocol.KindReverseCall, vals); p[key] == "" {
 			t.Errorf("%s = %v accepted", key, v)
 		}
 	}
 	vals := map[string]any{"base_url": "https://edge.example.com", "extra_base_urls": tooMany}
-	if p := protocol.ValidateConnectionValues(s, vals); p["extra_base_urls"] == "" {
+	if p := protocol.ValidateConnectionValues(s, protocol.KindReverseCall, vals); p["extra_base_urls"] == "" {
 		t.Errorf("%d additional base URLs accepted", len(tooMany))
+	}
+}
+
+// Each kind spells out its fields: the reconnect back-off is the
+// WebSocket's alone.
+func TestSchemaKinds(t *testing.T) {
+	s := Schema()
+	vals := map[string]any{"base_url": "https://edge.example.com", "ws_reconnect_backoff": "30s"}
+	if p := protocol.ValidateConnectionValues(s, protocol.KindReversePersistent, vals); p != nil {
+		t.Fatalf("reverse-persistent: %v", p)
+	}
+	if p := protocol.ValidateConnectionValues(s, protocol.KindReverseCall, vals); p["ws_reconnect_backoff"] == "" {
+		t.Fatal("reverse-call took the WebSocket's back-off")
 	}
 }
