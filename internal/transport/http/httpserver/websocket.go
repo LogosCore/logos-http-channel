@@ -25,8 +25,11 @@ import (
 // contracts/channel-core-connections/) and carries frames both ways: the
 // minion's to core, and core's to the minion, each packed like a response:
 // core's replies, and the messages core starts (tasks pushed as they are
-// queued). If core's socket drops, the channel opens another at the
-// minion's next frame; the minion does not notice.
+// queued). If core's socket closes (core restarted, or closed it), the
+// channel closes the minion's connection too: core can tie a new socket to
+// the session only through a message the minion seals, so the minion,
+// connecting again, sends one, and core can reach it at once. A minion need
+// not check in on a schedule to find out.
 //
 // Failures stay as opaque as the 404: a refused handshake gets the plain 404,
 // and any failure on an open connection closes it with no reason given. Drain,
@@ -81,6 +84,7 @@ const (
 	closeShutdown      = "shutdown"
 	closeAdmin         = "closed_by_admin"
 	closeWriteFailed   = "write_failed"
+	closeCoreClosed    = "core_closed"
 	closeShutdownGrace = 5 * time.Second // after in-flight messages, for the close handshake
 )
 
@@ -257,6 +261,7 @@ type wsConn struct {
 	active atomic.Int64
 
 	going     atomic.Bool // closing gently: frames read meanwhile are dropped
+	ending    atomic.Bool // closing: core's socket closes because this one does
 	closeOnce sync.Once
 
 	framesIn, framesOut, bytesIn, bytesOut, msgFailed atomic.Int64
@@ -330,27 +335,21 @@ func (c *wsConn) readEnded(err error) {
 }
 
 // toCore sends a minion's message to core over the connection socket,
-// opening one when there is none or it dropped; once more on a fresh one if
-// the send fails.
+// opening one at the minion's first message. A send that fails closes the
+// minion's connection (the caller's fail): the minion connects again and
+// sends what was not answered.
 func (c *wsConn) toCore(id string, enc []byte) error {
 	raw, err := parseUUID(id)
 	if err != nil {
 		return err
 	}
-	f := protocol.ConnFrame{ID: raw, Data: enc}
-	for attempt := 0; ; attempt++ {
-		core, err := c.coreConn()
-		if err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(c.ctx, c.h.syncTimeout)
-		err = core.Send(ctx, f)
-		cancel()
-		if err == nil || attempt == 1 {
-			return err
-		}
-		_ = core.Close()
+	core, err := c.coreConn()
+	if err != nil {
+		return err
 	}
+	ctx, cancel := context.WithTimeout(c.ctx, c.h.syncTimeout)
+	defer cancel()
+	return core.Send(ctx, protocol.ConnFrame{ID: raw, Data: enc})
 }
 
 // coreConn is the open connection socket to core, opened if there is none.
@@ -377,15 +376,18 @@ func (c *wsConn) coreConn() (*connclient.Conn, error) {
 }
 
 // fromCore carries what core sends to the minion until core's socket
-// closes; a new one opens at the minion's next frame.
+// closes, and then closes the minion's connection: the minion connects
+// again, and its first message ties a new socket to its session.
 func (c *wsConn) fromCore(core *connclient.Conn) {
 	defer func() { _ = core.Close() }()
 	for {
 		f, err := core.Receive(c.ctx)
 		if err != nil {
-			if c.ctx.Err() == nil {
-				slog.Info("websocket: core's socket closed, opening another at the minion's next frame",
+			if c.ctx.Err() == nil && !c.going.Load() && !c.ending.Load() {
+				slog.Info("websocket: core's socket closed, closing the minion's connection",
 					slog.String("conn_id", c.id), slog.String("err", err.Error()))
+				c.setReason(closeCoreClosed)
+				c.close(websocket.StatusNormalClosure, "")
 			}
 			return
 		}
@@ -477,6 +479,7 @@ func (c *wsConn) setReason(reason string) {
 // context, which ends the reader.
 func (c *wsConn) close(code websocket.StatusCode, _ string) {
 	c.closeOnce.Do(func() {
+		c.ending.Store(true)
 		go func() {
 			_ = c.conn.Close(code, "")
 			c.coreMu.Lock()

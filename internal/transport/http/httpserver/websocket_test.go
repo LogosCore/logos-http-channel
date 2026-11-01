@@ -194,9 +194,9 @@ func TestWebSocketPush(t *testing.T) {
 	}
 }
 
-// Core's socket drops: the next frame opens another, and the minion's
-// connection stays.
-func TestWebSocketCoreSocketReopens(t *testing.T) {
+// Core's socket drops: the minion's connection closes too, so the minion
+// connects again and its next message ties a new socket to its session.
+func TestWebSocketCoreSocketClosedClosesTheMinions(t *testing.T) {
 	core := newWSCore(t)
 	_, url := newWSChannel(t, core, WebSocketConfig{})
 	c := dial(t, url)
@@ -204,10 +204,15 @@ func TestWebSocketCoreSocketReopens(t *testing.T) {
 	if _, payload := recv(t, c); payload != "resp:drop" {
 		t.Fatalf("reply %q", payload)
 	}
-	time.Sleep(100 * time.Millisecond) // core's socket closes
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Fatalf("the minion's connection after core's socket closed: %v", err)
+	}
+	c = dial(t, url)
 	send(t, c, testUUID, "again")
 	if _, payload := recv(t, c); payload != "resp:again" {
-		t.Fatalf("after the drop %q", payload)
+		t.Fatalf("after reconnecting %q", payload)
 	}
 	if n := core.dialed(); n != 2 {
 		t.Fatalf("core saw %d sockets, want 2", n)

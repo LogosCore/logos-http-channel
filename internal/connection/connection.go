@@ -50,7 +50,7 @@ func Schema() protocol.ConnectionSchema {
 			// something.
 			protocol.KindReversePersistent: {Fields: append(append(addressFields(), requestFields(
 				"How long the minion waits for the reply to a message it sent over the WebSocket.",
-				"How often the minion checks in while connected: tasks come at once without it; a check-in says the minion is still there and how many tasks it takes.")...),
+				"How soon core expects the minion back after the WebSocket closed: the schedule it says, by which the session turns late, then lost. While it is open the minion need not check in: tasks come at once, and the channel closes it if its link to core breaks, so the minion reconnects (see the reconnect back-off).")...),
 				protocol.FieldSpec{
 					Key: "ws_reconnect_backoff", Type: protocol.FieldDuration, Label: "Reconnect back-off",
 					Description: "Longest wait between attempts to open the WebSocket again after it closed; the wait starts at 1s and doubles up to this.",
