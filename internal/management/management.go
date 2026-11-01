@@ -91,12 +91,6 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 				Default: defaultWS.MaxConnections, Min: 1, Max: 100000,
 			}, Apply: protocol.ApplyLive},
 			{FieldSpec: protocol.FieldSpec{
-				Key: "ws_max_inflight", Type: protocol.FieldInt, Label: "Messages in flight per connection",
-				Description: "Messages of one connection relayed to core at once. Messages with the same minion UUID are always relayed in order. Applies to new connections.",
-				Group:       "WebSocket", Order: 4,
-				Default: defaultWS.MaxInflight, Min: 1, Max: 64,
-			}, Apply: protocol.ApplyLive},
-			{FieldSpec: protocol.FieldSpec{
 				Key: "ws_ping_interval", Type: protocol.FieldDuration, Label: "Ping interval",
 				Description: "How often the channel pings each connection (WebSocket control frames, never sent to core). Keep it below proxy idle timeouts. Applies to new connections.",
 				Group:       "WebSocket", Order: 5,
@@ -104,7 +98,7 @@ func Manifest(cfg config.Config) protocol.ManagementManifest {
 			}, Apply: protocol.ApplyLive},
 			{FieldSpec: protocol.FieldSpec{
 				Key: "ws_idle_timeout", Type: protocol.FieldDuration, Label: "Idle timeout",
-				Description: "A connection that sends no message for this long is closed. Applies to new connections.",
+				Description: "A connection that neither sends a message nor answers a ping for this long is closed: a minion waiting for tasks answers pings. Applies to new connections.",
 				Group:       "WebSocket", Order: 6,
 				Default: defaultWS.IdleTimeout.String(), Min: "10s", Max: "24h",
 			}, Apply: protocol.ApplyLive},
@@ -206,9 +200,6 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	if n, ok := protocol.AsInt64(live["ws_max_connections"]); ok {
 		next.WebSocket.MaxConnections = int(n)
 	}
-	if n, ok := protocol.AsInt64(live["ws_max_inflight"]); ok {
-		next.WebSocket.MaxInflight = int(n)
-	}
 	for key, dst := range map[string]*time.Duration{
 		"ws_ping_interval": &next.WebSocket.PingInterval,
 		"ws_idle_timeout":  &next.WebSocket.IdleTimeout,
@@ -230,7 +221,7 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	ws := next.WebSocket
 	slog.Info("management: config applied", "by", actorName(mgmt.ActorFromContext(ctx)),
 		"max_body_bytes", next.MaxBodyBytes, "log_level", lvl.String(),
-		"ws_max_connections", ws.MaxConnections, "ws_max_inflight", ws.MaxInflight,
+		"ws_max_connections", ws.MaxConnections,
 		"ws_ping_interval", ws.PingInterval.String(), "ws_idle_timeout", ws.IdleTimeout.String())
 	return nil
 }

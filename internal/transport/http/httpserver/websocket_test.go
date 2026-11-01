@@ -10,44 +10,85 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
-// wsCore is a core stub for WebSocket tests: it echoes "resp:"+payload, and a
-// payload starting with "slow" takes delay to answer, "fail" gets a 500.
+// wsCore is a core stub for WebSocket tests: it serves connection sockets,
+// answers each frame with "resp:"+payload, and, for a payload of "push",
+// sends a frame of its own after; "drop" closes the socket after the reply.
+// refuse makes it answer handshakes with 403.
 type wsCore struct {
-	srv   *httptest.Server
-	delay time.Duration
+	srv *httptest.Server
 
 	mu        sync.Mutex
+	refuse    bool
+	dials     int
 	instances []string
 	peers     []string
+	kinds     []string
 }
 
-func newWSCore(t *testing.T, delay time.Duration) *wsCore {
+func newWSCore(t *testing.T) *wsCore {
 	t.Helper()
-	c := &wsCore{delay: delay}
+	c := &wsCore{}
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		in, err := readSync(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		c.mu.Lock()
-		c.instances = append(c.instances, in.ChannelInstance)
-		c.peers = append(c.peers, in.PeerAddress)
+		refuse := c.refuse
 		c.mu.Unlock()
-		raw := in.Data
-		switch {
-		case strings.HasPrefix(string(raw), "fail"):
-			http.Error(w, "boom", http.StatusInternalServerError)
+		if r.URL.Path != protocol.ConnectionPath || refuse {
+			http.Error(w, "refused", http.StatusForbidden)
 			return
-		case strings.HasPrefix(string(raw), "slow"):
-			time.Sleep(c.delay)
 		}
-		writeSync(w, in, append([]byte("resp:"), raw...))
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = ws.CloseNow() }()
+		c.mu.Lock()
+		c.dials++
+		c.instances = append(c.instances, r.Header.Get(protocol.HeaderChannelInstance))
+		c.peers = append(c.peers, r.Header.Get(protocol.HeaderPeerAddress))
+		c.kinds = append(c.kinds, r.Header.Get(protocol.HeaderConnectionKind))
+		c.mu.Unlock()
+		ctx := r.Context()
+		for {
+			_, b, err := ws.Read(ctx)
+			if err != nil {
+				return
+			}
+			f, err := protocol.DecodeConnFrame(b)
+			if err != nil {
+				return
+			}
+			out := []protocol.ConnFrame{{ID: f.ID, Data: append([]byte("resp:"), f.Data...)}}
+			if string(f.Data) == "push" {
+				out = append(out, protocol.ConnFrame{ID: f.ID, Data: []byte("pushed")})
+			}
+			for _, o := range out {
+				enc, _ := protocol.EncodeConnFrame(o)
+				if err := ws.Write(ctx, websocket.MessageBinary, enc); err != nil {
+					return
+				}
+			}
+			if string(f.Data) == "drop" {
+				return
+			}
+		}
 	}))
 	t.Cleanup(c.srv.Close)
 	return c
+}
+
+func (c *wsCore) setRefuse(v bool) {
+	c.mu.Lock()
+	c.refuse = v
+	c.mu.Unlock()
+}
+
+func (c *wsCore) dialed() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dials
 }
 
 func newWSChannel(t *testing.T, core *wsCore, ws WebSocketConfig) (*Handler, string) {
@@ -113,62 +154,68 @@ func closed(t *testing.T, c *websocket.Conn) websocket.StatusCode {
 	}
 }
 
+// Frames go to core over a connection socket, which the channel opens with
+// its instance, the kind and the minion's address; core's replies come back
+// packed for the minion.
 func TestWebSocketRoundTrip(t *testing.T) {
-	core := newWSCore(t, 0)
+	core := newWSCore(t)
 	h, url := newWSChannel(t, core, WebSocketConfig{})
-	c := dial(t, url+"/any/path?x=1")
-
-	for i, msg := range []string{"hello", "again"} {
-		send(t, c, testUUID, msg)
-		id, payload := recv(t, c)
-		if id != formatUUID(testUUID) || payload != "resp:"+msg {
-			t.Fatalf("reply %d = %s %q", i, id, payload)
-		}
+	c := dial(t, url)
+	send(t, c, testUUID, "one")
+	if id, payload := recv(t, c); id != formatUUID(testUUID) || payload != "resp:one" {
+		t.Fatalf("reply %s %q", id, payload)
+	}
+	send(t, c, uuidB, "two")
+	if id, payload := recv(t, c); id != formatUUID(uuidB) || payload != "resp:two" {
+		t.Fatalf("reply %s %q", id, payload)
 	}
 	core.mu.Lock()
-	instances := append([]string(nil), core.instances...)
-	peers := append([]string(nil), core.peers...)
+	inst, kinds, peers, dials := core.instances, core.kinds, core.peers, core.dials
 	core.mu.Unlock()
-	if len(instances) != 2 || instances[0] != "http-main" {
-		t.Errorf("instances at core = %v, want http-main twice", instances)
+	if dials != 1 || inst[0] != "http-main" || kinds[0] != protocol.KindReversePersistent || peers[0] != "127.0.0.1" {
+		t.Errorf("core saw %d sockets, instance %v, kind %v, peer %v", dials, inst, kinds, peers)
 	}
-	// Every frame carries the address the connection came from.
-	if len(peers) != 2 || peers[0] != "127.0.0.1" || peers[1] != "127.0.0.1" {
-		t.Errorf("peer addresses at core = %v, want 127.0.0.1 twice", peers)
-	}
-	st := h.Stats()
-	if st.WSConnectionsOpen != 1 || st.WSConnectionsTotal != 1 || st.WSMessagesTotal != 2 || st.WSMessagesFailed != 0 {
+	if st := h.Stats(); st.WSConnectionsOpen != 1 || st.WSConnectionsTotal != 1 || st.WSMessagesTotal != 2 || st.WSMessagesFailed != 0 {
 		t.Errorf("stats = %+v", st)
 	}
 }
 
-// Messages with different UUIDs are relayed concurrently; the same UUID's
-// messages keep their order.
-func TestWebSocketInflightOrdering(t *testing.T) {
-	core := newWSCore(t, 300*time.Millisecond)
-	_, url := newWSChannel(t, core, WebSocketConfig{MaxInflight: 4})
+// What core sends unasked (a task pushed) reaches the minion.
+func TestWebSocketPush(t *testing.T) {
+	core := newWSCore(t)
+	_, url := newWSChannel(t, core, WebSocketConfig{})
 	c := dial(t, url)
-
-	send(t, c, testUUID, "slow-1") // A: slow
-	send(t, c, testUUID, "fast-2") // A: must wait for slow-1
-	send(t, c, uuidB, "fast-3")    // B: overtakes A
-
-	var got []string
-	for range 3 {
-		id, payload := recv(t, c)
-		got = append(got, id[:4]+":"+payload)
+	send(t, c, testUUID, "push")
+	if _, payload := recv(t, c); payload != "resp:push" {
+		t.Fatalf("reply %q", payload)
 	}
-	a, b := formatUUID(testUUID)[:4], formatUUID(uuidB)[:4]
-	want := []string{b + ":resp:fast-3", a + ":resp:slow-1", a + ":resp:fast-2"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("replies = %v, want %v", got, want)
-		}
+	if id, payload := recv(t, c); id != formatUUID(testUUID) || payload != "pushed" {
+		t.Fatalf("push %s %q", id, payload)
+	}
+}
+
+// Core's socket drops: the next frame opens another, and the minion's
+// connection stays.
+func TestWebSocketCoreSocketReopens(t *testing.T) {
+	core := newWSCore(t)
+	_, url := newWSChannel(t, core, WebSocketConfig{})
+	c := dial(t, url)
+	send(t, c, testUUID, "drop")
+	if _, payload := recv(t, c); payload != "resp:drop" {
+		t.Fatalf("reply %q", payload)
+	}
+	time.Sleep(100 * time.Millisecond) // core's socket closes
+	send(t, c, testUUID, "again")
+	if _, payload := recv(t, c); payload != "resp:again" {
+		t.Fatalf("after the drop %q", payload)
+	}
+	if n := core.dialed(); n != 2 {
+		t.Fatalf("core saw %d sockets, want 2", n)
 	}
 }
 
 func TestWebSocketRefusedHandshakeIs404(t *testing.T) {
-	core := newWSCore(t, 0)
+	core := newWSCore(t)
 	h, url := newWSChannel(t, core, WebSocketConfig{MaxConnections: 1})
 	httpURL := "http" + strings.TrimPrefix(url, "ws")
 
@@ -200,7 +247,7 @@ func TestWebSocketRefusedHandshakeIs404(t *testing.T) {
 }
 
 func TestWebSocketFailuresCloseTheConnection(t *testing.T) {
-	core := newWSCore(t, 0)
+	core := newWSCore(t)
 	h, url := newWSChannel(t, core, WebSocketConfig{})
 
 	c := dial(t, url)
@@ -227,29 +274,29 @@ func TestWebSocketFailuresCloseTheConnection(t *testing.T) {
 		t.Errorf("too large: close = %v", code)
 	}
 
+	// Core refuses the socket (not registered): the connection closes.
+	core.setRefuse(true)
 	c = dial(t, url)
-	send(t, c, testUUID, "fail")
+	send(t, c, testUUID, "hello")
 	if code := closed(t, c); code != websocket.StatusNormalClosure {
-		t.Errorf("core failure: close = %v", code)
+		t.Errorf("core refused: close = %v", code)
 	}
 	if st := h.Stats(); st.WSMessagesFailed != 1 || st.CoreErrorsTotal != 1 || st.TooLargeTotal != 1 {
 		t.Errorf("stats = %+v", st)
 	}
 }
 
-// Drain and shutdown close connections with "going away", after answering
-// what is already in flight.
+// Drain and shutdown close connections with "going away".
 func TestWebSocketDrainAndShutdown(t *testing.T) {
-	core := newWSCore(t, 200*time.Millisecond)
+	core := newWSCore(t)
 	h, url := newWSChannel(t, core, WebSocketConfig{})
 
 	c := dial(t, url)
-	send(t, c, testUUID, "slow")
-	time.Sleep(50 * time.Millisecond) // the message is in flight
-	h.SetDraining(true)
-	if _, payload := recv(t, c); payload != "resp:slow" {
-		t.Fatalf("in-flight reply = %q", payload)
+	send(t, c, testUUID, "hello")
+	if _, payload := recv(t, c); payload != "resp:hello" {
+		t.Fatalf("reply %q", payload)
 	}
+	h.SetDraining(true)
 	if code := closed(t, c); code != websocket.StatusGoingAway {
 		t.Errorf("drain: close = %v, want going away", code)
 	}
@@ -267,12 +314,46 @@ func TestWebSocketDrainAndShutdown(t *testing.T) {
 }
 
 func TestWebSocketIdleTimeout(t *testing.T) {
-	core := newWSCore(t, 0)
+	core := newWSCore(t)
 	_, url := newWSChannel(t, core, WebSocketConfig{IdleTimeout: 100 * time.Millisecond})
 	c := dial(t, url)
 	start := time.Now()
 	closed(t, c)
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("idle connection closed after %v", d)
+	}
+}
+
+// A minion that sends nothing but answers pings (one waiting for tasks) is
+// not idle.
+func TestWebSocketPongsKeepItOpen(t *testing.T) {
+	core := newWSCore(t)
+	_, url := newWSChannel(t, core, WebSocketConfig{IdleTimeout: 300 * time.Millisecond, PingInterval: 50 * time.Millisecond})
+	c := dial(t, url)
+	// Reading answers the channel's pings: one reader for the whole test (a
+	// read whose context ends closes the connection).
+	frames := make(chan []byte, 1)
+	go func() {
+		for {
+			_, b, err := c.Read(context.Background())
+			if err != nil {
+				close(frames)
+				return
+			}
+			frames <- b
+		}
+	}()
+	time.Sleep(800 * time.Millisecond)
+	send(t, c, testUUID, "still")
+	select {
+	case b, ok := <-frames:
+		if !ok {
+			t.Fatal("closed after 800 ms of quiet")
+		}
+		if _, raw, err := unpack(b); err != nil || string(raw) != "resp:still" {
+			t.Fatalf("reply %q %v", raw, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no reply")
 	}
 }

@@ -37,8 +37,15 @@ const (
 // Schema returns the connection schema.
 func Schema() protocol.ConnectionSchema {
 	return protocol.ConnectionSchema{
-		SchemaVersion: protocol.ConnectionSchemaV1,
+		SchemaVersion: protocol.ConnectionSchemaV2,
 		Version:       Version,
+		// Requests (reverse-call), and a WebSocket the minion keeps open, over
+		// which core sends as it has something (reverse-persistent). Every
+		// field is shared: an endpoint is not of one kind yet.
+		Kinds: map[string]protocol.ConnectionKind{
+			protocol.KindReverseCall:       {},
+			protocol.KindReversePersistent: {},
+		},
 		Fields: []protocol.FieldSpec{
 			{
 				Key: "base_url", Type: protocol.FieldURL, Label: "Base URL", Required: true,

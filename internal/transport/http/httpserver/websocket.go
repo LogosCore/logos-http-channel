@@ -14,39 +14,39 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/logoscore/logos-golang-channel-core/v3/pkg/connclient"
 	"github.com/logoscore/logos-golang-module-core/pkg/logging"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
 // A minion may open a WebSocket (a valid handshake on any path) and send its
-// messages as binary frames, each one packed exactly like a request body;
-// every frame is relayed to core like a request and answered with one binary
-// frame packed like a response.
-//
-// Up to WebSocketConfig.MaxInflight messages of a connection are relayed at
-// once. Replies carry no id other than the minion UUID, so messages with the
-// same UUID are relayed in order (first in, first out) and messages with
-// different UUIDs concurrently: the minion matches a reply by its UUID.
+// messages as binary frames, each one packed exactly like a request body.
+// The channel opens a connection socket to core for it (docs:
+// contracts/channel-core-connections/) and carries frames both ways: the
+// minion's to core, and core's to the minion, each packed like a response:
+// core's replies, and the messages core starts (tasks pushed as they are
+// queued). If core's socket drops, the channel opens another at the
+// minion's next frame; the minion does not notice.
 //
 // Failures stay as opaque as the 404: a refused handshake gets the plain 404,
 // and any failure on an open connection closes it with no reason given. Drain,
 // shutdown and the close_connections action close connections with "going
-// away" after their in-flight messages are answered.
+// away".
 
 // WebSocketConfig holds the WebSocket limits core can change live; they apply
 // to connections opened afterwards (MaxConnections at every handshake).
 type WebSocketConfig struct {
 	MaxConnections int
-	MaxInflight    int           // per connection
 	PingInterval   time.Duration // server pings keep proxies open and find dead peers
-	IdleTimeout    time.Duration // no message from the minion for this long closes it
+	// IdleTimeout closes a connection that neither sent a frame nor answered
+	// a ping for this long: a minion waiting for tasks answers pings.
+	IdleTimeout time.Duration
 }
 
 // DefaultWebSocketConfig fills zero WebSocketConfig fields; the management
 // manifest declares the same values as defaults.
 var DefaultWebSocketConfig = WebSocketConfig{
 	MaxConnections: 1000,
-	MaxInflight:    4,
 	PingInterval:   30 * time.Second,
 	IdleTimeout:    5 * time.Minute,
 }
@@ -55,9 +55,6 @@ func (c WebSocketConfig) withDefaults() WebSocketConfig {
 	d := DefaultWebSocketConfig
 	if c.MaxConnections <= 0 {
 		c.MaxConnections = d.MaxConnections
-	}
-	if c.MaxInflight <= 0 {
-		c.MaxInflight = d.MaxInflight
 	}
 	if c.PingInterval <= 0 {
 		c.PingInterval = d.PingInterval
@@ -151,8 +148,6 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 		start:   time.Now(),
 		cfg:     wcfg,
 		maxBody: cfg.MaxBodyBytes,
-		queues:  map[string]chan wsJob{},
-		sem:     make(chan struct{}, wcfg.MaxInflight),
 		level:   slog.LevelDebug,
 		outcome: outcomeClosed,
 	}
@@ -253,13 +248,13 @@ type wsConn struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	sem      chan struct{} // in-flight slots
-	inflight sync.WaitGroup
-	// admitMu orders admitting a message (inflight.Add) against goAway
-	// starting to wait: once going is set, nothing more enters flight.
-	admitMu sync.Mutex
-	mu      sync.Mutex
-	queues  map[string]chan wsJob // per minion UUID, first in first out
+	// core is the connection socket to core, opened at the minion's first
+	// frame and again when it dropped.
+	coreMu sync.Mutex
+	core   *connclient.Conn
+	// active is when the minion last sent a frame or answered a ping (unix
+	// nanoseconds).
+	active atomic.Int64
 
 	going     atomic.Bool // closing gently: frames read meanwhile are dropped
 	closeOnce sync.Once
@@ -275,26 +270,21 @@ type wsConn struct {
 	closeReason string
 }
 
-type wsJob struct {
-	messageID string
-	id        string
-	data      []byte
-	size      int
-}
+func (c *wsConn) touch() { c.active.Store(time.Now().UnixNano()) }
 
-// run reads frames until the connection ends, then waits for the messages it
-// relayed to finish.
+// run reads the minion's frames until the connection ends, carrying each to
+// core.
 func (c *wsConn) run() {
+	c.touch()
 	go c.pinger()
+	go c.watchdog()
 	for {
-		readCtx, cancel := context.WithTimeout(c.ctx, c.cfg.IdleTimeout)
-		typ, data, err := c.conn.Read(readCtx)
-		idle := readCtx.Err() == context.DeadlineExceeded
-		cancel()
+		typ, data, err := c.conn.Read(c.ctx)
 		if err != nil {
-			c.readEnded(err, idle)
+			c.readEnded(err)
 			break
 		}
+		c.touch()
 		c.framesIn.Add(1)
 		c.bytesIn.Add(int64(len(data)))
 		if c.going.Load() {
@@ -309,35 +299,26 @@ func (c *wsConn) run() {
 			c.fail(slog.LevelInfo, outcomeBadRequest, "unpack", err, closeBadFrame)
 			break
 		}
-		select {
-		case c.sem <- struct{}{}:
-		case <-c.ctx.Done():
-		}
-		if c.ctx.Err() != nil {
+		if err := c.toCore(id, enc); err != nil {
+			c.h.coreErrors.Add(1)
+			c.h.ws.failed.Add(1)
+			c.msgFailed.Add(1)
+			c.fail(slog.LevelWarn, outcomeCoreError, "core", err, closeRelayFailed)
 			break
 		}
-		c.admitMu.Lock()
-		if c.going.Load() {
-			c.admitMu.Unlock()
-			<-c.sem
-			continue // closing: dropped, like frames read meanwhile
-		}
-		c.inflight.Add(1)
-		c.admitMu.Unlock()
-		c.enqueue(wsJob{messageID: protocol.NewID(), id: id, data: enc, size: len(data)})
+		c.h.ws.messages.Add(1)
+		slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_core"),
+			slog.Int("body_bytes", len(data)))
 	}
-	c.inflight.Wait()
 	c.close(websocket.StatusNormalClosure, "")
 }
 
 // readEnded records why reading stopped, unless a close we started explains it.
-func (c *wsConn) readEnded(err error, idle bool) {
+func (c *wsConn) readEnded(err error) {
 	if c.ctx.Err() != nil || c.going.Load() {
 		return
 	}
 	switch {
-	case idle:
-		c.setReason(closeIdleTimeout)
 	case websocket.CloseStatus(err) == websocket.StatusMessageTooBig || strings.Contains(err.Error(), "read limited"):
 		c.h.tooLarge.Add(1)
 		c.fail(slog.LevelWarn, outcomeTooLarge, "frame", err, closeTooLarge)
@@ -348,74 +329,89 @@ func (c *wsConn) readEnded(err error, idle bool) {
 	}
 }
 
-// enqueue hands a message to its UUID's queue, starting a worker for the
-// queue if none runs. The queue never blocks: at most MaxInflight messages
-// are in flight on the connection.
-func (c *wsConn) enqueue(job wsJob) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	q, ok := c.queues[job.id]
-	if !ok {
-		q = make(chan wsJob, cap(c.sem))
-		c.queues[job.id] = q
-		go c.worker(job.id, q)
+// toCore sends a minion's message to core over the connection socket,
+// opening one when there is none or it dropped; once more on a fresh one if
+// the send fails.
+func (c *wsConn) toCore(id string, enc []byte) error {
+	raw, err := parseUUID(id)
+	if err != nil {
+		return err
 	}
-	q <- job
+	f := protocol.ConnFrame{ID: raw, Data: enc}
+	for attempt := 0; ; attempt++ {
+		core, err := c.coreConn()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(c.ctx, c.h.syncTimeout)
+		err = core.Send(ctx, f)
+		cancel()
+		if err == nil || attempt == 1 {
+			return err
+		}
+		_ = core.Close()
+	}
 }
 
-// worker relays one UUID's messages in order and exits when its queue is empty.
-func (c *wsConn) worker(id string, q chan wsJob) {
-	for {
-		c.mu.Lock()
+// coreConn is the open connection socket to core, opened if there is none.
+func (c *wsConn) coreConn() (*connclient.Conn, error) {
+	c.coreMu.Lock()
+	defer c.coreMu.Unlock()
+	if c.core != nil {
 		select {
-		case job := <-q:
-			c.mu.Unlock()
-			c.process(job)
+		case <-c.core.Done():
 		default:
-			delete(c.queues, id)
-			c.mu.Unlock()
+			return c.core, nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, c.h.syncTimeout)
+	defer cancel()
+	core, err := connclient.Dial(ctx, connclient.Options{BaseURL: c.h.syncBase, Instance: c.h.channelID,
+		Kind: protocol.KindReversePersistent, Peer: c.peer, HTTPClient: c.h.client, MaxFrame: c.maxBody})
+	if err != nil {
+		return nil, err
+	}
+	c.core = core
+	go c.fromCore(core)
+	return core, nil
+}
+
+// fromCore carries what core sends to the minion until core's socket
+// closes; a new one opens at the minion's next frame.
+func (c *wsConn) fromCore(core *connclient.Conn) {
+	defer func() { _ = core.Close() }()
+	for {
+		f, err := core.Receive(c.ctx)
+		if err != nil {
+			if c.ctx.Err() == nil {
+				slog.Info("websocket: core's socket closed, opening another at the minion's next frame",
+					slog.String("conn_id", c.id), slog.String("err", err.Error()))
+			}
 			return
 		}
-	}
-}
-
-func (c *wsConn) process(job wsJob) {
-	defer func() {
-		<-c.sem
-		c.inflight.Done()
-	}()
-	start := time.Now()
-	res := c.h.relay(c.ctx, job.messageID, job.id, c.peer, job.data)
-	c.h.ws.messages.Add(1)
-	ml := wsMessageLog{connID: c.id, messageID: job.messageID, start: start, size: job.size, res: res}
-	if res.err != nil {
-		c.h.ws.failed.Add(1)
-		c.msgFailed.Add(1)
-		ml.log()
-		if res.outcome != outcomeClientGone {
-			c.fail(res.level, res.outcome, res.stage, res.err, closeRelayFailed)
+		out, err := pack(formatUUID(f.ID), f.Data)
+		if err != nil {
+			continue
 		}
-		return
-	}
-	wctx, cancel := context.WithTimeout(c.ctx, wsWriteTimeout)
-	err := c.conn.Write(wctx, websocket.MessageBinary, res.reply)
-	cancel()
-	if err != nil {
-		ml.writeErr = err
-		ml.log()
-		if c.ctx.Err() == nil {
-			c.setReason(closeWriteFailed)
-			c.close(websocket.StatusNormalClosure, "")
+		wctx, cancel := context.WithTimeout(c.ctx, wsWriteTimeout)
+		err = c.conn.Write(wctx, websocket.MessageBinary, out)
+		cancel()
+		if err != nil {
+			if c.ctx.Err() == nil {
+				c.setReason(closeWriteFailed)
+				c.close(websocket.StatusNormalClosure, "")
+			}
+			return
 		}
-		return
+		c.framesOut.Add(1)
+		c.bytesOut.Add(int64(len(out)))
+		slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_minion"),
+			slog.Int("response_bytes", len(out)))
 	}
-	c.framesOut.Add(1)
-	c.bytesOut.Add(int64(len(res.reply)))
-	ml.log()
 }
 
 // pinger pings every PingInterval; a peer that does not answer within the
-// interval is gone.
+// interval is gone, and one that answers is active.
 func (c *wsConn) pinger() {
 	t := time.NewTicker(c.cfg.PingInterval)
 	defer t.Stop()
@@ -429,6 +425,25 @@ func (c *wsConn) pinger() {
 			cancel()
 			if err != nil && c.ctx.Err() == nil {
 				c.setReason(closePingTimeout)
+				c.close(websocket.StatusNormalClosure, "")
+				return
+			}
+			c.touch()
+		}
+	}
+}
+
+// watchdog closes a connection idle for IdleTimeout: no frame and no pong.
+func (c *wsConn) watchdog() {
+	t := time.NewTicker(max(c.cfg.IdleTimeout/4, 10*time.Millisecond))
+	defer t.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-t.C:
+			if time.Since(time.Unix(0, c.active.Load())) > c.cfg.IdleTimeout {
+				c.setReason(closeIdleTimeout)
 				c.close(websocket.StatusNormalClosure, "")
 				return
 			}
@@ -458,37 +473,30 @@ func (c *wsConn) setReason(reason string) {
 	c.logMu.Unlock()
 }
 
-// close closes the connection once, then cancels its context, which ends the
-// reader and aborts core calls still in flight.
+// close closes the connection once, with core's socket, then cancels its
+// context, which ends the reader.
 func (c *wsConn) close(code websocket.StatusCode, _ string) {
 	c.closeOnce.Do(func() {
 		go func() {
 			_ = c.conn.Close(code, "")
+			c.coreMu.Lock()
+			if c.core != nil {
+				_ = c.core.Close()
+			}
+			c.coreMu.Unlock()
 			c.cancel()
 		}()
 	})
 }
 
-// goAway closes gently: frames read meanwhile are dropped, messages already
-// in flight are answered (bounded by grace), then "going away".
-func (c *wsConn) goAway(reason string, grace time.Duration) {
-	c.admitMu.Lock()
-	first := c.going.CompareAndSwap(false, true)
-	c.admitMu.Unlock()
-	if !first {
+// goAway closes gently: frames read meanwhile are dropped, then "going
+// away". Core answers what it was sent over its socket, which closes with
+// the connection: the minion sends again what was not answered.
+func (c *wsConn) goAway(reason string, _ time.Duration) {
+	if !c.going.CompareAndSwap(false, true) {
 		return
 	}
 	c.setReason(reason)
-	done := make(chan struct{})
-	go func() {
-		c.inflight.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(grace):
-	case <-c.ctx.Done():
-	}
 	c.close(websocket.StatusGoingAway, "")
 }
 
@@ -529,48 +537,8 @@ func (c *wsConn) log(r *http.Request, trusted []netip.Prefix) {
 	slog.LogAttrs(context.Background(), level, msg, attrs...)
 }
 
-// wsMessageLog is one relayed frame's line: debug when answered, at the
-// failure's level otherwise. The connection line carries the client details.
-type wsMessageLog struct {
-	connID, messageID string
-	start             time.Time
-	size              int
-	res               relayResult
-	writeErr          error
-}
-
-func (l wsMessageLog) log() {
-	level, msg, outcome := slog.LevelDebug, "websocket message relayed", outcomeOK
-	err := l.writeErr
-	if l.res.err != nil {
-		level, msg, outcome, err = l.res.level, "websocket message failed", l.res.outcome, l.res.err
-	} else if err != nil {
-		level, msg, outcome = slog.LevelInfo, "websocket message failed", outcomeClientGone
-	}
-	if !slog.Default().Enabled(context.Background(), level) {
-		return
-	}
-	attrs := []slog.Attr{
-		slog.String("conn_id", l.connID),
-		slog.String("request_id", l.messageID),
-		slog.Int("body_bytes", l.size),
-		slog.Int("response_bytes", len(l.res.reply)),
-		slog.Int("core_status", l.res.coreStatus),
-		slog.Float64("core_ms", ms(l.res.coreTime)),
-		slog.Float64("duration_ms", ms(time.Since(l.start))),
-		slog.String("outcome", outcome),
-	}
-	if l.res.stage != "" {
-		attrs = append(attrs, slog.String("stage", l.res.stage))
-	}
-	if err != nil {
-		attrs = append(attrs, slog.String("err", err.Error()))
-	}
-	slog.LogAttrs(context.Background(), level, msg, attrs...)
-}
-
-// CloseWebSockets closes every open connection gently (going away after their
-// in-flight messages) and reports how many there were.
+// CloseWebSockets closes every open connection gently (going away) and
+// reports how many there were.
 func (h *Handler) CloseWebSockets(reason string) int {
 	conns := h.wsSnapshot()
 	for _, c := range conns {

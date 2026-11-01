@@ -85,23 +85,29 @@ A minion may also keep a WebSocket open and exchange its messages over it:
 a valid WebSocket handshake on **any path** is accepted, alongside plain
 requests on the same port.
 
-- Each **binary frame** is one message, packed exactly like a request body;
-  the reply is one binary frame packed like a response. Each frame is relayed
-  to core like a request; core does not tell the two apart.
-- Up to `ws_max_inflight` messages per connection are relayed at once. Replies
-  carry no id other than the minion UUID, so messages with the **same UUID are
-  answered in order**, messages with different UUIDs as soon as core answers:
-  match replies by UUID.
+It is a `reverse-persistent` connection: core sends over it whenever it has
+something, not only in reply (the docs' [Channel ↔ Core:
+Connections](https://logoscore.github.io/logos-docs/contracts/channel-core-connections/)).
+
+- Each **binary frame** is one message, packed exactly like a request body.
+  At the minion's first frame the channel opens a **connection socket** to
+  core (a WebSocket to `/api/channel/connection`, with channel-core's
+  `connclient`) and carries frames both ways over it: core's come back to the
+  minion packed like a response, the reply to each message (always one) and
+  the messages core starts (tasks pushed as they are queued, cancels). Match
+  them by what is inside: a reply names the message it answers.
+- If core's socket closes (core restarting), the channel opens another at the
+  minion's next frame; the minion's connection stays.
 - The channel pings every `ws_ping_interval` (WebSocket control frames, never
-  sent to core) and closes a connection that sends no message for
-  `ws_idle_timeout`.
+  sent to core) and closes a connection that neither sends a message nor
+  answers a ping for `ws_idle_timeout`: a minion waiting for tasks stays.
 - Failures stay opaque: a refused handshake (invalid, draining, too many
   connections) gets the plain `404`; a failure on an open connection (text
   frame, malformed or oversized frame, core failure) closes it with no reason
   given. Reconnect and resend.
 - Drain, shutdown and the `close_connections` action close connections with
-  *going away* (1001) after answering the messages already in flight; frames
-  received meanwhile are dropped.
+  *going away* (1001), and their sockets to core with them; the minion sends
+  again what was not answered.
 
 Behind a reverse proxy, enable WebSocket upgrades and keep its idle timeout
 above `ws_ping_interval` (nginx: `proxy_read_timeout`, 60s by default).
@@ -132,7 +138,6 @@ Properties (defaults are the env values the process started with):
 | `max_body_bytes` | bytes | live | 17 to 64 MiB (or up to the env value, if that is larger); the core reply limit scales with it |
 | `log_level` | `debug` / `info` / `warn` / `error` | live | stderr level, default `info`: `debug` adds every request outcome, `info` client errors, startup and management changes, `warn` core problems only |
 | `ws_max_connections` | int | live | open WebSockets at once, default 1000; further handshakes get a 404 |
-| `ws_max_inflight` | int | live (new connections) | messages relayed at once per connection, default 4 |
 | `ws_ping_interval` | duration | live (new connections) | default `30s`, 5s to 5m |
 | `ws_idle_timeout` | duration | live (new connections) | default `5m`, 10s to 24h |
 

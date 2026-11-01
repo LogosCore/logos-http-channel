@@ -75,6 +75,8 @@ type Handler struct {
 	client      *http.Client
 	syncURL     string
 	syncTimeout time.Duration
+	// syncBase is core's base URL: connection sockets open under it.
+	syncBase string
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
@@ -97,6 +99,7 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 		client:      &http.Client{},
 		syncURL:     SyncURL(core.SyncBaseURL),
 		syncTimeout: core.SyncTimeout,
+		syncBase:    core.SyncBaseURL,
 	}
 	h.ws.conns = map[*wsConn]struct{}{}
 	h.SetConfig(cfg)
