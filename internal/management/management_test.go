@@ -153,7 +153,7 @@ func TestDrainResumeAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("draining status = %d, want 404", resp.StatusCode)
 	}

@@ -105,7 +105,7 @@ func validHandshake(r *http.Request) error {
 	case r.Method != http.MethodGet:
 		return fmt.Errorf("handshake method %s", r.Method)
 	case !headerHasToken(r.Header, "Connection", "upgrade"):
-		return errors.New("Connection header lacks upgrade")
+		return errors.New("the Connection header lacks upgrade")
 	case r.Header.Get("Sec-WebSocket-Version") != "13":
 		return fmt.Errorf("unsupported WebSocket version %q", r.Header.Get("Sec-WebSocket-Version"))
 	}

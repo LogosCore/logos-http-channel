@@ -74,7 +74,7 @@ func TestRequestLogServed(t *testing.T) {
 		t.Fatal(err)
 	}
 	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -120,10 +120,10 @@ func TestRequestLogFailures(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	post(t, ts.URL+"/short", []byte("x")).Body.Close()
-	post(t, ts.URL+"/big", make([]byte, testMaxBody+1)).Body.Close()
+	_ = post(t, ts.URL+"/short", []byte("x")).Body.Close()
+	_ = post(t, ts.URL+"/big", make([]byte, testMaxBody+1)).Body.Close()
 	h.SetDraining(true)
-	post(t, ts.URL+"/drained", buildPayload(0, []byte("x"), testUUID)).Body.Close()
+	_ = post(t, ts.URL+"/drained", buildPayload(0, []byte("x"), testUUID)).Body.Close()
 	h.SetDraining(false)
 
 	down := httptest.NewServer(http.NotFoundHandler())
@@ -132,7 +132,7 @@ func TestRequestLogFailures(t *testing.T) {
 	hDown := NewHandler("http-main", CoreConfig{SyncBaseURL: downURL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	tsDown := httptest.NewServer(hDown)
 	defer tsDown.Close()
-	post(t, tsDown.URL+"/core-down", buildPayload(0, []byte("x"), testUUID)).Body.Close()
+	_ = post(t, tsDown.URL+"/core-down", buildPayload(0, []byte("x"), testUUID)).Body.Close()
 
 	recs := records()
 	if len(recs) != 4 {
@@ -226,7 +226,7 @@ func TestRequestLogSkippedWhenDisabled(t *testing.T) {
 	defer core.Close()
 	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	defer ts.Close()
-	post(t, ts.URL, buildPayload(2, []byte("abcd"), testUUID)).Body.Close()
+	_ = post(t, ts.URL, buildPayload(2, []byte("abcd"), testUUID)).Body.Close()
 	if buf.Len() != 0 {
 		t.Errorf("served request logged at info level: %s", buf.String())
 	}

@@ -80,7 +80,7 @@ func TestHandler_Counters(t *testing.T) {
 	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
-	post(t, ts.URL, buildPayload(0, []byte("ok"), testUUID)).Body.Close()
+	_ = post(t, ts.URL, buildPayload(0, []byte("ok"), testUUID)).Body.Close()
 	assertPlain404(t, post(t, ts.URL, []byte{1, 2}), "malformed")
 
 	st := h.Stats()

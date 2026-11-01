@@ -272,8 +272,9 @@ func CheckCore(ctx context.Context, client *http.Client, syncURL string) CoreChe
 	if err != nil {
 		return CoreCheck{LatencyMS: latency, Error: err.Error()}
 	}
+	// Drained so the connection can be reused; only the status is wanted.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return CoreCheck{Reachable: resp.StatusCode < 500, Status: resp.StatusCode, LatencyMS: latency}
 }
 

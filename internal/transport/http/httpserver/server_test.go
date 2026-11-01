@@ -30,7 +30,7 @@ const testMaxBody = 1 << 20
 func assertPlain404(t *testing.T, resp *http.Response, what string) {
 	t.Helper()
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound || string(body) != "404 page not found\n" {
 		t.Fatalf("%s: status = %d, body = %q, want plain 404", what, resp.StatusCode, body)
 	}
@@ -155,7 +155,7 @@ func TestIntegration_PostSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -198,7 +198,7 @@ func TestAnyMethod_Works(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: status = %d, want 200", method, resp.StatusCode)
 		}
@@ -224,7 +224,7 @@ func TestAnyPath_Works(t *testing.T) {
 		if err != nil {
 			t.Fatalf("path %s: %v", path, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("path %s: status = %d, want 200", path, resp.StatusCode)
 		}
@@ -263,7 +263,7 @@ func TestOversizedBody_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("at limit: status = %d, want 200", resp.StatusCode)
 	}
@@ -331,7 +331,7 @@ func TestHealthz_InternalServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

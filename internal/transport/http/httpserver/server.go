@@ -411,7 +411,8 @@ func syncWithCore(ctx context.Context, client *http.Client, syncURL string, inbo
 	if err != nil {
 		return protocol.OutboundMinionMessage{}, 0, err
 	}
-	defer resp.Body.Close()
+	// Read below; closing it says nothing about core's reply.
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusForbidden:

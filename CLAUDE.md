@@ -13,8 +13,11 @@ It ships only as a Docker image: a `v*` tag builds and publishes it (`.github/wo
 ```bash
 go run ./cmd/http-channel --config .env    # run the server
 go test ./...                               # run all tests
+golangci-lint run ./...                     # lint, as CI runs it
 go build -o http-channel ./cmd/http-channel # build binary
 ```
+
+CI (`.github/workflows/ci.yml`, the same file in protocol, module-core, channel-core, factory-core and the HTTP channel) runs `go test ./...` and golangci-lint v2.13.2 with its default linters (no config file) on pushes to `main`, on `v*` tags and on pull requests. The code is kept at 0 issues: fix a finding (an explicit `_ =` with the reason, for a Close whose error says nothing) rather than excluding it.
 
 ## Architecture
 
