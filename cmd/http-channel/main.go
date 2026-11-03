@@ -19,10 +19,10 @@ import (
 	"github.com/logoscore/logos-golang-module-core/pkg/logging"
 	"github.com/logoscore/logos-golang-module-core/pkg/logstream"
 	"github.com/logoscore/logos-golang-module-core/pkg/module"
-	"github.com/logoscore/logos-http-channel/internal/config"
-	"github.com/logoscore/logos-http-channel/internal/connection"
-	"github.com/logoscore/logos-http-channel/internal/management"
-	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
+	"github.com/logoscore/logos-http-channel/v3/internal/config"
+	"github.com/logoscore/logos-http-channel/v3/internal/connection"
+	"github.com/logoscore/logos-http-channel/v3/internal/management"
+	httpserver "github.com/logoscore/logos-http-channel/v3/internal/transport/http/httpserver"
 )
 
 // version is the module build version reported at registration; set with

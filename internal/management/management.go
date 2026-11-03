@@ -16,8 +16,8 @@ import (
 
 	"github.com/logoscore/logos-golang-module-core/pkg/mgmt"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
-	"github.com/logoscore/logos-http-channel/internal/config"
-	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
+	"github.com/logoscore/logos-http-channel/v3/internal/config"
+	httpserver "github.com/logoscore/logos-http-channel/v3/internal/transport/http/httpserver"
 )
 
 // defaultWS are the WebSocket defaults the manifest declares.

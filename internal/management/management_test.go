@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
-	"github.com/logoscore/logos-http-channel/internal/config"
-	httpserver "github.com/logoscore/logos-http-channel/internal/transport/http/httpserver"
+	"github.com/logoscore/logos-http-channel/v3/internal/config"
+	httpserver "github.com/logoscore/logos-http-channel/v3/internal/transport/http/httpserver"
 )
 
 func testConfig(syncURL string) config.Config {
