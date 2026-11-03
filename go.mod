@@ -5,9 +5,9 @@ go 1.25.7
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
-	github.com/logoscore/logos-golang-channel-core/v3 v3.5.1
-	github.com/logoscore/logos-golang-module-core v0.2.23
-	github.com/logoscore/logos-golang-protocol v0.28.0
+	github.com/logoscore/logos-golang-channel-core/v3 v3.5.2
+	github.com/logoscore/logos-golang-module-core v0.2.24
+	github.com/logoscore/logos-golang-protocol v0.29.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 )
 
