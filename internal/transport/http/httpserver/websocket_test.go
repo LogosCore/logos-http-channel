@@ -286,7 +286,14 @@ func TestWebSocketFailuresCloseTheConnection(t *testing.T) {
 	if code := closed(t, c); code != websocket.StatusNormalClosure {
 		t.Errorf("core refused: close = %v", code)
 	}
-	if st := h.Stats(); st.WSMessagesFailed != 1 || st.CoreErrorsTotal != 1 || st.TooLargeTotal != 1 {
+	// The client sees a close as soon as the channel sends it; the channel
+	// counts the connection's end once its close handshake is over: wait
+	// for the connections to end.
+	st := h.Stats()
+	for deadline := time.Now().Add(5 * time.Second); st.WSConnectionsOpen != 0 && time.Now().Before(deadline); st = h.Stats() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st.WSMessagesFailed != 1 || st.CoreErrorsTotal != 1 || st.TooLargeTotal != 1 {
 		t.Errorf("stats = %+v", st)
 	}
 }
