@@ -225,6 +225,7 @@ Environment variables:
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`) — `host:port`, `:port`, or a bare port (all interfaces)
 - `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
+- `LOGOS_CORE_CA_FILE`, `LOGOS_CORE_CERT_SHA256`, `LOGOS_CORE_TLS_INSECURE` (default: none: the system's trust) — how the channel trusts core's certificate over HTTPS, for a self-signed one: a PEM to trust, the certificate's SHA-256 fingerprint, or no verification at all; see [How modules reach core](https://logoscore.github.io/logos-docs/core-infrastructure/#how-modules-reach-core)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
 - `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`, which is also what core gets as the message's `Logos-Peer-Address` (the session's external address). Behind a redirector or CDN, list it here and have it forward `X-Forwarded-For`, or every session shows the redirector's address

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v3/pkg/syncclient"
+	"github.com/logoscore/logos-golang-module-core/pkg/coretls"
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 )
 
@@ -93,10 +94,17 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 	if core.SyncTimeout <= 0 {
 		core.SyncTimeout = 30 * time.Second
 	}
+	// Core's TLS trust from the environment (module-core's coretls); main
+	// stops on a setting that does not read, so the system's trust stands
+	// in only for tests.
+	client, err := coretls.Client()
+	if err != nil {
+		client = &http.Client{}
+	}
 	h := &Handler{
 		channelID: channelID,
 		// Timeouts are per request (syncTimeout).
-		client:      &http.Client{},
+		client:      client,
 		syncURL:     SyncURL(core.SyncBaseURL),
 		syncTimeout: core.SyncTimeout,
 		syncBase:    core.SyncBaseURL,

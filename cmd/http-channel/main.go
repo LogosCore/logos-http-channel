@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/logoscore/logos-golang-channel-core/v3/pkg/channel"
+	"github.com/logoscore/logos-golang-module-core/pkg/coretls"
 	"github.com/logoscore/logos-golang-module-core/pkg/lifecycle"
 	"github.com/logoscore/logos-golang-module-core/pkg/logging"
 	"github.com/logoscore/logos-golang-module-core/pkg/logstream"
@@ -64,6 +65,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// How the channel trusts core's certificate (LOGOS_CORE_CA_FILE,
+	// LOGOS_CORE_CERT_SHA256, LOGOS_CORE_TLS_INSECURE): a setting that does
+	// not read stops it here, not at every request.
+	if _, err := coretls.Client(); err != nil {
+		log.Fatalf("core TLS: %v", err)
+	}
 	handler := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{
 		SyncBaseURL: cfg.LogosSyncBaseURL,
 		SyncTimeout: cfg.CoreSyncTimeout,
