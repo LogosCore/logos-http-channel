@@ -57,3 +57,24 @@ func TestSchemaKinds(t *testing.T) {
 		t.Fatal("reverse-call took the WebSocket's back-off")
 	}
 }
+
+// A minion that reads a minion config reads its connection by these
+// numbers: each stays its field's, the same in every kind.
+func TestFieldNumbers(t *testing.T) {
+	want := map[string]int{
+		"base_url": 1, "extra_base_urls": 2, "host_header": 3, "sni": 4, "proxy": 5, "tls_verify": 6, "tls_pin_sha256": 7,
+		"user_agent": 8, "headers": 9, "request_timeout": 10, "checkin_interval": 11, "checkin_jitter": 12,
+		"ws_reconnect_backoff": 13,
+	}
+	s := Schema()
+	for kind, k := range s.Kinds {
+		if !s.Numbered(kind) {
+			t.Errorf("%s: fields without numbers", kind)
+		}
+		for _, f := range k.Fields {
+			if f.Num != want[f.Key] {
+				t.Errorf("%s: %s is %d, want %d", kind, f.Key, f.Num, want[f.Key])
+			}
+		}
+	}
+}
