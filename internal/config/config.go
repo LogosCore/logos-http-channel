@@ -75,10 +75,16 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 	}
 	cfg.CoreSyncTimeout = timeout
 
+	// Core's broker: its user is logos-core's RABBITMQ_DEFAULT_USER; its
+	// password (RABBITMQ_DEFAULT_PASS) has no default that could fit.
+	password := os.Getenv("RABBITMQ_PASSWORD")
+	if password == "" {
+		return Config{}, fmt.Errorf("RABBITMQ_PASSWORD is required: core's broker password (logos-core's RABBITMQ_DEFAULT_PASS)")
+	}
 	vhost := envOrDefault("RABBITMQ_VHOST", "/")
 	cfg.RabbitMQURL = (&url.URL{
 		Scheme: "amqp",
-		User:   url.UserPassword(envOrDefault("RABBITMQ_USER", "guest"), envOrDefault("RABBITMQ_PASSWORD", "guest")),
+		User:   url.UserPassword(envOrDefault("RABBITMQ_USER", "logos"), password),
 		Host:   net.JoinHostPort(envOrDefault("RABBITMQ_HOST", "localhost"), envOrDefault("RABBITMQ_PORT", "5672")),
 		// amqp091 takes the vhost from the path minus its leading "/", so the
 		// default "/" vhost becomes the path "//".

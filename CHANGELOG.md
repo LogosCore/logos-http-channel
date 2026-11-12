@@ -1,5 +1,68 @@
 # Changelog
 
+From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
+`logos-golang-module-core` and `logos-golang-channel-core` (v3.7.3 to
+v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2) are not
+listed: their tags say which.
+
+## Unreleased
+
+- **Broker defaults fit core's dev stack.** `RABBITMQ_USER` defaults to
+  `logos` (logos-core's `RABBITMQ_DEFAULT_USER`), and `RABBITMQ_PASSWORD`
+  has no default: the channel does not start without it. `guest` never
+  worked with core's broker. `.env.example` sets only the password, since
+  `docker compose` reads `.env` too.
+
+## v3.10.0
+
+- **Numbered fields.** Every field of the connection schema has a number,
+  its order's (`base_url` 1 to `ws_reconnect_backoff` 13), the same in both
+  kinds: a minion built from a minion config reads its settings by them
+  (protocol v0.50.0 requires them). `TestFieldNumbers` pins them.
+
+## v3.9.1
+
+- Images: arm64 cross-compiled on the runner, not emulated (about twenty
+  seconds instead of two minutes).
+
+## v3.9.0
+
+- **Core over HTTPS with a self-signed certificate**: `LOGOS_CORE_CA_FILE`,
+  `LOGOS_CORE_CERT_SHA256` or `LOGOS_CORE_TLS_INSECURE` (module-core's
+  `coretls`, for the sync calls and the connection sockets); a setting that
+  does not read stops the channel at start.
+
+## v3.8.7
+
+- **Module path `github.com/logoscore/logos-http-channel/v3`**, as Go
+  requires of v2+ tags: without it the Go proxy refused every v3 tag.
+
+## v3.8.5
+
+- The icon's lines are thinner, in step with BOB's and Dumbo's.
+
+## v3.8.1
+
+- golangci-lint at 0 issues, and a CI workflow runs the tests and the lint on
+  pushes, tags and pull requests (only the image was built before, on tags).
+
+## v3.8.0
+
+- **WebSockets are `reverse-persistent` connections**, carried over a
+  connection socket to core (channel-core's `connclient`) instead of a sync
+  call per frame: core's replies and the messages it starts (tasks pushed,
+  cancels) come back as they come. When core's socket closes, or a send to
+  it fails, the channel closes the minion's connection: the minion
+  reconnects and its first message ties a new socket to its session, so it
+  need not check in on a schedule. `ws_max_inflight` is gone.
+- **Connection schema v3**: `reverse-call` and `reverse-persistent` each
+  declare their fields in full, described for the kind;
+  `ws_reconnect_backoff` is the WebSocket's alone.
+
+## v3.7.15
+
+- MIT license, as the other Logos repositories.
+
 ## v3.7.2
 
 - Dependencies: `logos-golang-protocol` v0.10.0, `logos-golang-module-core` v0.2.4, `logos-golang-channel-core` v3.2.4. No change in behavior.

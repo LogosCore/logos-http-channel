@@ -1,11 +1,18 @@
 package config
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+// TestMain gives every test the broker password, which has no default.
+func TestMain(m *testing.M) {
+	_ = os.Setenv("RABBITMQ_PASSWORD", "test")
+	os.Exit(m.Run())
+}
 
 func TestLoadFromEnv_Defaults(t *testing.T) {
 	cfg, err := LoadFromEnv("")
@@ -76,9 +83,17 @@ func TestLoadFromEnv_RabbitMQURL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("vhost %q: parse %s: %v", c.vhost, cfg.RabbitMQURL, err)
 		}
-		if uri.Vhost != c.want || uri.Password != c.password || uri.Host != "localhost" || uri.Port != 5672 {
-			t.Fatalf("vhost %q: got %+v, want vhost %q password %q", c.vhost, uri, c.want, c.password)
+		if uri.Vhost != c.want || uri.Username != "logos" || uri.Password != c.password || uri.Host != "localhost" || uri.Port != 5672 {
+			t.Fatalf("vhost %q: got %+v, want user logos, vhost %q password %q", c.vhost, uri, c.want, c.password)
 		}
+	}
+}
+
+// The broker password has no default: without it the channel does not start.
+func TestLoadFromEnv_RabbitMQPasswordRequired(t *testing.T) {
+	t.Setenv("RABBITMQ_PASSWORD", "")
+	if _, err := LoadFromEnv(""); err == nil {
+		t.Fatal("no RABBITMQ_PASSWORD: expected error")
 	}
 }
 

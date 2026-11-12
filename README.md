@@ -4,9 +4,9 @@ HTTP channel module for Logos.
 
 ## Purpose
 
-Receives HTTP requests (any method, any path) with a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Packs core's reply back into the same binary format for the response.
+Receives HTTP requests (any method, any path) with a binary payload, extracts the build id (16 raw bytes) and the minion's ciphertext, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Packs core's reply back into the same binary format for the response. A minion may also keep a [WebSocket](#websocket) open, which the channel carries over a connection socket to core.
 
-Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply.
+Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply and `connclient` for the WebSockets' sockets to core.
 
 ## Wire format
 
@@ -64,8 +64,7 @@ Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
   ciphertext for the minion and its build id. A minion should check that
   the id is its own.
 - **Nothing for the minion** (core's 204) is a `200` too, with an empty
-  ciphertext: the offset byte `00` and the id, 17 bytes. Today every reply is
-  this one, since core has no tasking yet.
+  ciphertext: the offset byte `00` and the id, 17 bytes.
 - **Any failure is a plain `404 page not found`**: a malformed or oversized
   body, the channel draining, core unreachable or refusing the channel (an
   unregistered or blocked instance), or an invalid reply from core. The reason
@@ -96,8 +95,11 @@ Connections](https://logoscore.github.io/logos-docs/contracts/channel-core-conne
   minion packed like a response, the reply to each message (always one) and
   the messages core starts (tasks pushed as they are queued, cancels). Match
   them by what is inside: a reply names the message it answers.
-- If core's socket closes (core restarting), the channel opens another at the
-  minion's next frame; the minion's connection stays.
+- If core's socket closes (core restarting, or closing it) or a send to core
+  fails, the channel closes the minion's connection (`core_closed`,
+  `relay_failed`): the minion reconnects, and its first message ties a new
+  socket to its session. This is why a minion on a WebSocket need not check
+  in on a schedule.
 - The channel pings every `ws_ping_interval` (WebSocket control frames, never
   sent to core) and closes a connection that neither sends a message nor
   answers a ping for `ws_idle_timeout`: a minion waiting for tasks stays.
@@ -167,7 +169,12 @@ falls back to in order), `host_header`, `sni`, `proxy`, `tls_verify` (default `f
 `tls_pin_sha256`, `user_agent`, `headers` (name → value), `request_timeout` (default `40s`;
 keep it above `CORE_SYNC_TIMEOUT`),
 `checkin_interval` (`60s`), `checkin_jitter` (`20` %) and
-`ws_reconnect_backoff` (`60s`). Every instance declares the same schema. In core,
+`ws_reconnect_backoff` (`60s`), for each of its two connection kinds:
+`reverse-call` (plain requests) and `reverse-persistent` (a WebSocket; the
+`ws_reconnect_backoff` is its alone). Every field is numbered, the same in
+both kinds (`base_url` 1 to `ws_reconnect_backoff` 13): a minion reads its
+settings from core's minion config by these numbers, so a number is never
+reused. Every instance declares the same schema. In core,
 each operation keeps ready-to-use values for it (channel endpoints) for creating
 minions; the channel never sees them. There is no transport, method or
 path parameter: the channel accepts all of them. See the
@@ -207,8 +214,8 @@ A WebSocket logs one line per connection when it ends (`websocket closed`, or
 fields and headers, `duration_ms`, `frames_in` / `frames_out`, `bytes_in` /
 `bytes_out`, `messages_failed` and `close_reason` (`client_closed`,
 `idle_timeout`, `ping_timeout`, `connection_lost`, `bad_frame`,
-`message_too_large`, `relay_failed`, `write_failed`, `draining`, `shutdown`,
-`closed_by_admin`). Each relayed frame logs `websocket message relayed` at
+`message_too_large`, `relay_failed`, `core_closed`, `write_failed`,
+`draining`, `shutdown`, `closed_by_admin`). Each relayed frame logs `websocket message relayed` at
 debug (`conn_id`, `request_id`, sizes, core status and timing) or
 `websocket message failed`. A refused handshake logs `websocket refused` like a
 request line.
@@ -231,8 +238,9 @@ Environment variables:
 - `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`, which is also what core gets as the message's `Logos-Peer-Address` (the session's external address). Behind a redirector or CDN, list it here and have it forward `X-Forwarded-For`, or every session shows the redirector's address
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server, same forms as `LISTEN_ADDR`
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, 17 to 1 GiB
-- `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `RABBITMQ_VHOST`
-  (defaults: `localhost` / `5672` / `guest` / `guest` / `/`) — core's control-plane broker
+- `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_VHOST`
+  (defaults: `localhost` / `5672` / `logos` / `/`) — core's control-plane broker
+- `RABBITMQ_PASSWORD` (required) — the broker's password, logos-core's `RABBITMQ_DEFAULT_PASS`
 
 `.env` fallback: pass path with `--config <path>`. Existing env vars take precedence.
 
@@ -258,6 +266,11 @@ docker run --network logos-core_logos -p 8080:8080 \
 ```bash
 go run ./cmd/http-channel --config .env
 ```
+
+On the host, the defaults reach logos-core's dev stack (core at
+`localhost:8002`, its RabbitMQ at `localhost:5672` as `logos`): set
+`RABBITMQ_PASSWORD`, and a `LISTEN_ADDR` other than `:8080`, which the
+stack's nginx has. `.env.example` lists every setting.
 
 ## Tests
 

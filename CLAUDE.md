@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-`logos-http-channel` is a Go module that implements HTTP transport for Logos minion communication. It receives HTTP requests (any method, any path) containing a binary payload, extracts `id` (raw UUIDv4) and `encrypted_data`, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Core's reply is packed back into the same binary format.
+`logos-http-channel` is a Go module that implements HTTP transport for Logos minion communication. It receives HTTP requests (any method, any path) containing a binary payload, extracts the build id (16 raw bytes) and the minion's ciphertext, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Core's reply is packed back into the same binary format.
 
-It ships only as a Docker image: a `v*` tag builds and publishes it (`.github/workflows/docker-image.yml`). Nothing imports it as a Go module, so the module path has no `/v3` suffix to match the tags, and that is fine.
+It ships only as a Docker image: a `v*` tag builds and publishes it (`.github/workflows/docker-image.yml`). Nothing imports it as a Go module; its module path is `github.com/logoscore/logos-http-channel/v3`, matching the tags' major version.
 
 ## Commands
 
@@ -17,7 +17,7 @@ golangci-lint run ./...                     # lint, as CI runs it
 go build -o http-channel ./cmd/http-channel # build binary
 ```
 
-CI (`.github/workflows/ci.yml`, the same file in protocol, module-core, channel-core, factory-core and the HTTP channel) runs `go test ./...` and golangci-lint v2.13.2 with its default linters (no config file) on pushes to `main`, on `v*` tags and on pull requests. The code is kept at 0 issues: fix a finding (an explicit `_ =` with the reason, for a Close whose error says nothing) rather than excluding it.
+CI (`.github/workflows/ci.yml`, the same file in module-core, channel-core, factory-core and the HTTP, TCP and SSH modules; the protocol's adds 32-bit builds, Dumbo's and Raven's run their generated page and script) runs `go test ./...` and golangci-lint v2.13.2 with its default linters (no config file) on pushes to `main`, on `v*` tags and on pull requests. The code is kept at 0 issues: fix a finding (an explicit `_ =` with the reason, for a Close whose error says nothing) rather than excluding it.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ CI (`.github/workflows/ci.yml`, the same file in protocol, module-core, channel-
 
 **Internal packages:**
 
-- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `LOG_FORMAT`, `TRUSTED_PROXIES`, `RABBITMQ_*`)
+- `internal/config/` — environment-based config (`CHANNEL_ID`, `LISTEN_ADDR`, `LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`, `HEALTH_LISTEN_ADDR`, `MAX_BODY_BYTES`, `LOG_FORMAT`, `TRUSTED_PROXIES`, `RABBITMQ_*`). The defaults reach logos-core's dev stack from the host (core at `localhost:8002`, RabbitMQ as `logos`); `RABBITMQ_PASSWORD` has none and is required. `.env.example` sets only the password: `docker compose` reads `.env` too, and a core URL or broker host set there would override the compose file's in-network ones.
 - `internal/transport/http/httpserver/` — `Handler` is the client handler: bare (no ServeMux, so no redirects), treating every request as a message. It reads `RuntimeConfig` (max body) from an atomic pointer per request, so `SetConfig` applies live; `CoreConfig` (sync URL, timeout) is fixed from env; keeps atomic counters (`Stats`) and a drain flag. `New` wraps it in the client server; `NewHealth` serves `GET /healthz` on a separate internal port. Contains binary pack/unpack logic and inline sync client.
 - `internal/connection/` — the minion connection schema declared at registration (`module.Config.Connection`, version 3): what minions are given to reach the channel, per connection kind (`reverse-call`, `reverse-persistent`), each kind's fields in full even where they repeat (`ws_reconnect_backoff` is the WebSocket's alone; the timing fields' descriptions differ per kind). Every field has a `num`, its `Order`'s (1 `base_url` to 13 `ws_reconnect_backoff`), the same in each kind: a minion built from a minion config reads its settings by it (docs: minion-connection, Field numbers), so a number stays its field's, a new field takes the next one and a removed field's is never given again; `TestFieldNumbers` pins them. No transport/method/path parameters — the channel accepts all of them.
 - `internal/management/` — the management manifest (properties, `drain`/`resume`/`close_connections`/`check_core` actions, counter status) built from env config, bound to the `Handler` via `logos-golang-module-core/pkg/mgmt`. An action that would change nothing declares it in `available_when` (drain while draining, resume while not, closing WebSockets with none open). Settings for reaching core stay env-only; don't make them manageable.
