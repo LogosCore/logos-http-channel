@@ -5,6 +5,18 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## v3.10.3
+
+- **Registers again after core or its RabbitMQ was away.** With
+  `logos-golang-module-core` v0.3.5 (through `logos-golang-channel-core`
+  v3.9.5). A register sent while the broker had no queue for core (RabbitMQ's
+  container recreated, as `docker compose down/up` does, and core not started
+  on it yet) was dropped, and the channel waited for its reply for good: core
+  kept it dead and refused its minions' messages (the plain 404) until the
+  channel was restarted. Every call to core now has a deadline, a request no
+  queue takes comes back at once and is sent again every 5 s, so the channel
+  registers within seconds of core.
+
 ## v3.10.1
 
 - **Broker defaults fit core's dev stack.** `RABBITMQ_USER` defaults to
