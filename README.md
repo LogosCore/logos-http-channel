@@ -6,7 +6,7 @@ HTTP channel module for Logos.
 
 Receives HTTP requests (any method, any path) with a binary payload, extracts the build id (16 raw bytes) and the minion's ciphertext, and forwards them to the Logos core sync endpoint: the ciphertext as the raw request body, the ids in `Logos-*` headers. Packs core's reply back into the same binary format for the response. A minion may also keep a [WebSocket](#websocket) open, which the channel carries over a connection socket to core.
 
-Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply and `connclient` for the WebSockets' sockets to core.
+Uses `github.com/logoscore/logos-golang-protocol` for the sync call's types and headers, and `logos-golang-channel-core`'s `syncclient.ReadReply` to read core's reply and `connclient` for the WebSockets' sockets to core. It opens no control link: it has no bind kind, so core never calls it.
 
 ## Wire format
 
@@ -29,11 +29,16 @@ offset    ciphertext part 1   build id           ciphertext part 2
   `offset` bytes in (0 to 255, and at most the ciphertext's length), so it has
   no fixed position. A minion should pick a random offset for every message;
   the channel does for every reply.
-- **Build id** is the 16 bytes of the UUID of the build that made the
-  minion (`build_id`), in the order of its canonical text form: the hex digits
-  without dashes, decoded.
+- **Build id** is the 16 bytes of the id the message is sent under, in the
+  order of its canonical text form (the hex digits without dashes,
+  decoded): the build's (`build_id`) until the minion has one of its own,
+  then its temporary id (after a stage) or its session's (after its
+  `hello`). The channel passes whichever it is to core as
+  `Logos-Build-Id`, and never knows staging exists.
 - A message is at least 17 bytes. A request's ciphertext must not be empty,
-  and the whole body is at most `max_body_bytes` (1 MiB by default, live).
+  and the whole body is at most `max_body_bytes` (1 MiB by default, live):
+  room for the protocol's largest message, 768 KiB of plaintext, sealed and
+  packed.
 
 Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
 `c1 c2 c3 c4 c5`, offset 2:
@@ -114,6 +119,15 @@ Connections](https://logoscore.github.io/logos-docs/contracts/channel-core-conne
 Behind a reverse proxy, enable WebSocket upgrades and keep its idle timeout
 above `ws_ping_interval` (nginx: `proxy_read_timeout`, 60s by default).
 
+## A minion behind another
+
+A minion that cannot reach the channel can check in through one that can: a
+reverse port forward on minion A (`reverse_tunnel`: A listens, and core
+connects each connection that comes to the destination, from its own
+network), its destination this channel's address as core reaches it, and
+minion B built with A's address and the forward's port as its `base_url`.
+See the docs' [Tunnels](https://logoscore.github.io/logos-docs/contracts/minion-messages/tunnels/).
+
 ## Registration with core
 
 Core only accepts sync traffic from registered module instances. On startup the
@@ -146,9 +160,17 @@ Properties (defaults are the env values the process started with):
 How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.
 
-Actions: `drain` (every request and WebSocket handshake gets a 404 until `resume`, open WebSockets are closed; shown in the `draining` status value, heartbeat health stays `healthy`),
-`resume`, `close_connections` (closes every WebSocket after its in-flight messages), and `check_core` (POSTs `{}` to the core sync URL and reports
+Actions: `drain` (high risk: every request and WebSocket handshake gets a 404 until `resume`, open WebSockets are closed; shown in the `draining` status value, heartbeat health stays `healthy`),
+`resume`, `close_connections` (high risk: closes every WebSocket after its in-flight messages), and `check_core` (POSTs `{}` to the core sync URL and reports
 `reachable`, `status` and `latency_ms`; core's 400 counts as reachable).
+An action that would change nothing is not offered: `drain` while draining,
+`resume` while not, `close_connections` with no WebSocket open.
+
+On SIGINT/SIGTERM the channel stops taking requests and lets those waiting
+on core finish (up to `CORE_SYNC_TIMEOUT` + 5s; the compose file's
+`stop_grace_period` is 40s, above it), closes the WebSockets after their
+in-flight messages, and deregisters last: core takes no traffic from an
+unregistered instance.
 
 Status values, also sent in heartbeat metrics: `requests_total`,
 `succeeded_total`, `failed_total` (HTTP requests and WebSocket handshakes;
@@ -163,22 +185,39 @@ when `true`).
 ## Minion connection schema
 
 At registration the channel also declares what minions are given to reach it
-(`internal/connection`): `base_url` (`http(s)://host[:port]`, no path),
-`extra_base_urls` (more addresses in the same form, up to 16, which a minion
-falls back to in order), `host_header`, `sni`, `proxy`, `tls_verify` (default `false`),
-`tls_pin_sha256`, `user_agent`, `headers` (name → value), `request_timeout` (default `40s`;
-keep it above `CORE_SYNC_TIMEOUT`),
-`checkin_interval` (`60s`), `checkin_jitter` (`20` %) and
-`ws_reconnect_backoff` (`60s`), for each of its two connection kinds:
-`reverse-call` (plain requests) and `reverse-persistent` (a WebSocket; the
-`ws_reconnect_backoff` is its alone). Every field is numbered, the same in
-both kinds (`base_url` 1 to `ws_reconnect_backoff` 13): a minion reads its
-settings from core's minion config by these numbers, so a number is never
-reused. Every instance declares the same schema. In core,
-each operation keeps ready-to-use values for it (channel endpoints) for creating
-minions; the channel never sees them. There is no transport, method or
-path parameter: the channel accepts all of them. See the
+(`internal/connection`, version 3), for each of its two connection kinds:
+`reverse-call` (plain requests) and `reverse-persistent` (a WebSocket). Both
+kinds have every field below but `ws_reconnect_backoff`, the WebSocket's
+alone; the timing fields read per kind (a check-in over a WebSocket is a
+frame, not a request). Every instance declares the same schema. See the
 [contract](https://logoscore.github.io/logos-docs/contracts/minion-connection/).
+
+| Key | Num | Type | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `base_url` | 1 | url | required | `http(s)://host[:port]`, **no path**: the channel accepts any path, the minion picks its own. At most 2048 characters |
+| `extra_base_urls` | 2 | string list | | More addresses of the channel in the same form (other fronts), at most 16. A minion falls back to them, in order, when the base URL cannot be reached; the other fields apply to each |
+| `host_header` | 3 | string | | The `Host` to send when it must differ from the base URL's host (a CDN, a reverse proxy). At most 255 characters |
+| `sni` | 4 | string | | The TLS server name, when it must differ. At most 255 characters |
+| `proxy` | 5 | url | | The minion's outbound proxy, e.g. `http://proxy.corp:3128` |
+| `tls_verify` | 6 | bool | `false` | Check the certificate against the system's trusted roots |
+| `tls_pin_sha256` | 7 | string | | The server certificate's SHA-256, 64 hex characters: authenticates the server with verification off |
+| `user_agent` | 8 | string | | Empty: the minion's built-in one. At most 512 characters. A User-Agent field (`format: user_agent`): core's form offers real browsers' and says when a value is outdated or gives itself away |
+| `headers` | 9 | string map | | Extra headers on every request and WebSocket handshake, name → value: names are header tokens, values have no line breaks and at most 4096 characters; at most 32 |
+| `request_timeout` | 10 | duration | `40s` | 1s to 10m. How long the minion waits for a reply: keep it above `CORE_SYNC_TIMEOUT` (30s by default), or it drops replies still on their way |
+| `checkin_interval` | 11 | duration | `60s` | 1s to 168h. `reverse-call`: how often to check in with nothing to send. `reverse-persistent`: how soon core expects the minion back after the WebSocket closed (late, then lost, by it); while it is open no check-in is needed |
+| `checkin_jitter` | 12 | int (%) | `20` | 0 to 100: random spread around the interval |
+| `ws_reconnect_backoff` | 13 | duration | `60s` | `reverse-persistent` only. 1s to 1h: the longest wait between reconnects, from 1s, doubling |
+
+A minion built from core's [minion
+config](https://logoscore.github.io/logos-docs/contracts/minion-build/#the-minion-config)
+reads its settings by these numbers, so a number stays its field's
+(`TestFieldNumbers` pins them): a new field takes the next one, and a
+removed field's is never given again. There is no transport, method or
+path parameter: the channel accepts plain requests and WebSockets, any
+method, any path, and a minion may use and switch between them; a factory
+that lets operators choose them declares its own connection parameters. In
+core, each operation keeps ready-to-use values for the schema (channel
+endpoints) for creating minions; the channel never sees them.
 
 ## Request log
 
@@ -188,8 +227,11 @@ Every request is logged once, when it ends:
 - client mistake (unreadable or malformed body): `info` `request failed`
 - body over `max_body_bytes`: `warn` `request failed` (`too_large`): a minion
   built for a larger limit keeps failing until it is raised
+- core refused the message (a 422 or a 409, below): `info` `request failed`
+  (`refused`)
 - client left while core was answering: `info` `request failed`
-- core trouble (unreachable, non-200, bad reply, 403): `warn` `request failed`
+- core trouble (unreachable, another status, a bad reply, a 403): `warn`
+  `request failed`
 - refused while drained: `debug` `request refused`
 
 Fields: `request_id` (also sent to core as `X-Request-Id`), `remote_addr`,
@@ -197,8 +239,10 @@ Fields: `request_id` (also sent to core as `X-Request-Id`), `remote_addr`,
 `body_bytes`, `headers.*` (every request header, lowercased, as received —
 nothing is redacted), `core_status` and `core_ms` (when core was called),
 `status`, `response_bytes`, `duration_ms`, `outcome` (`ok`, `draining`,
-`bad_request`, `too_large`, `core_error`, `rejected_by_core`, `client_gone`), and `stage` /
-`err` on failure. The body is never logged.
+`bad_request`, `too_large`, `refused`, `core_error`, `rejected_by_core`,
+`client_gone`; a WebSocket's line also `closed`, a handshake refused past
+`ws_max_connections` `too_many_connections`), and `stage` / `err` on
+failure. The body is never logged.
 
 Logs (`log/slog`, JSON or text on stderr) can also be tailed live from the module's
 Logs tab in core: the channel declares the `logs` capability and streams
@@ -220,6 +264,24 @@ debug (`conn_id`, `request_id`, sizes, core status and timing) or
 `websocket message failed`. A refused handshake logs `websocket refused` like a
 request line.
 
+### Why a minion gets 404
+
+Every failure looks the same to the minion, and to whoever probes the
+channel. This log says why:
+
+| `outcome` | `core_status` | Why |
+| --- | --- | --- |
+| `rejected_by_core` | 403 | The instance is not registered with core, or is blocked. |
+| `refused` | 422 | Core knows no build, temporary id or session by the id the message came under, or the frame does not open (another id's keys, the wrong direction, a bad tag or padding), or it holds no message core takes (not the protocol's CBOR, over 768 KiB). Core's log (its `minionsync` logger) says which. |
+| `refused` | 409 | A message sent again whose reply core no longer keeps: send the items in a new message. |
+| `bad_request` | | The framing (stage `read body` or `unpack`): a body under 17 bytes, an offset past the ciphertext. |
+| `too_large` | | A body over `max_body_bytes`. |
+| `core_error` | | Core cannot be reached, or answered with another status: the minion keeps its session and tries again. |
+| `draining` | | The channel is drained. |
+
+On the dev stack: `docker logs logos-http-channel` and `docker logs
+logos-core-dev`.
+
 ## Health check
 
 `GET /healthz` is served on a separate internal port (`HEALTH_LISTEN_ADDR`,
@@ -231,7 +293,7 @@ Environment variables:
 
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`) — `host:port`, `:port`, or a bare port (all interfaces)
-- `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`)
+- `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`) — core's base URL, the name this channel gives what other modules call `LOGOS_CORE_BASE_URL`: the sync call (`/api/channel/sync`) and the WebSockets' sockets (`/api/channel/connection`) go under it
 - `LOGOS_CORE_CA_FILE`, `LOGOS_CORE_CERT_SHA256`, `LOGOS_CORE_TLS_INSECURE` (default: none: the system's trust) — how the channel trusts core's certificate over HTTPS, for a self-signed one: a PEM to trust, the certificate's SHA-256 fingerprint, or no verification at all; see [How modules reach core](https://logoscore.github.io/logos-docs/core-infrastructure/#how-modules-reach-core)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
@@ -249,7 +311,13 @@ Environment variables:
 Start logos-core (`make services`), put `RABBITMQ_PASSWORD` (core's
 `RABBITMQ_DEFAULT_PASS`) in `.env`, then `docker compose up -d --build`. The
 channel runs as its own stack on host port 8090 (`HTTP_CHANNEL_PORT`) and joins
-the `logos-core_logos` network.
+the `logos-core_logos` network. A minion run on the host reaches it at
+`http://localhost:8090` (its `base_url`).
+
+`docker compose` reads `.env` too, and a core URL or broker host set there
+wins over the compose file's, which reach core inside the network: for the
+stack, keep the password alone in it (`.env.example` sets only that, the
+rest commented out).
 
 Or with plain `docker run`:
 
@@ -260,6 +328,31 @@ docker run --network logos-core_logos -p 8080:8080 \
   -e RABBITMQ_HOST=logos-rabbitmq -e RABBITMQ_USER=logos -e RABBITMQ_PASSWORD=... \
   ghcr.io/logoscore/logos-http-channel:latest
 ```
+
+### Against an unreleased protocol or SDK
+
+The image builds from tagged modules alone (`.dockerignore` keeps a
+workspace out). With a local `go.work` (`use .` and
+`../logos-golang-protocol`, checkouts side by side), run a binary built on
+the host instead:
+
+```bash
+CGO_ENABLED=0 GOOS=linux go build -o .dev-bin/http-channel ./cmd/http-channel
+```
+
+mounted over the image's by a `docker-compose.override.yml`:
+
+```yaml
+services:
+  http-channel:
+    volumes:
+      - ./.dev-bin/http-channel:/app/http-channel:ro
+```
+
+Then `docker compose up -d`, without `--build`; after each change, build it
+again and `docker compose restart`. `go.work`, the override and `.dev-bin/`
+are gitignored and never committed (the docs' [Changing the
+Protocol](https://logoscore.github.io/logos-docs/contributing/changing-the-protocol/)).
 
 ## Run
 
@@ -278,4 +371,9 @@ stack's nginx has. `.env.example` lists every setting.
 go test ./...
 ```
 
-Integration tests use a built-in core simulator that stubs `/api/channel/sync`.
+Integration tests use a built-in core simulator that stubs `/api/channel/sync`
+(`internal/transport/http/httpserver/test_logos_core_test.go`). CI
+(`.github/workflows/ci.yml`) runs them and golangci-lint v2.13.2 (its default
+linters, kept at 0 issues) on pushes to `main`, `v*` tags and pull requests;
+a `v*` tag also builds and pushes the image, `linux/amd64` and `linux/arm64`
+(`docker-image.yml`).
