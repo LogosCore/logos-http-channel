@@ -5,6 +5,13 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## v3.13.1
+
+- **A longer delay line.** With simulated latency, a WebSocket's delay line
+  holds 1024 frames each way, up from 64. A minion that keeps many messages
+  waiting over a slow round trip (one every 5 ms for 0.8 s is 160) was held
+  back by the line, not by the link it plays. Only with `SIMULATE_LATENCY`.
+
 ## v3.13.0
 
 - **Simulated latency, for testing.** With `SIMULATE_LATENCY=true` the
