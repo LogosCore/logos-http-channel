@@ -5,6 +5,17 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## v3.12.0
+
+- **Every proxy in front is believed; `TRUSTED_PROXIES` is gone.** The
+  client's address (`client_ip`, and core's `Logos-Peer-Address`, the
+  session's external address) is the leftmost address in
+  `X-Forwarded-For`, else `X-Real-IP`, else the peer, whatever the peer's
+  address. Before, those headers counted only from a peer listed in
+  `TRUSTED_PROXIES`, empty by default: behind nginx on a Docker host every
+  session showed the bridge's gateway (172.18.0.1). A client that reaches
+  the channel directly can now name any address in those headers.
+
 ## v3.11.0
 
 - **`LOGOS_CORE_BASE_URL`, not `LOGOS_SYNC_BASE_URL`.** Core's base URL

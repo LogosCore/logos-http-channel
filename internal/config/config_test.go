@@ -118,24 +118,18 @@ func TestLoadFromEnv_RabbitMQPasswordRequired(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnv_LogFormatAndTrustedProxies(t *testing.T) {
+func TestLoadFromEnv_LogFormat(t *testing.T) {
 	cfg, err := LoadFromEnv("")
-	if err != nil || cfg.LogFormat != "json" || len(cfg.TrustedProxies) != 0 {
-		t.Fatalf("defaults: %+v (%v)", cfg, err)
+	if err != nil || cfg.LogFormat != "json" {
+		t.Fatalf("default: %q (%v), want json", cfg.LogFormat, err)
 	}
 	t.Setenv("LOG_FORMAT", "Text")
-	t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.7 ,::1")
-	cfg, err = LoadFromEnv("")
-	if err != nil || cfg.LogFormat != "text" || len(cfg.TrustedProxies) != 3 || cfg.TrustedProxies[1].String() != "192.168.1.7/32" {
-		t.Fatalf("got %+v (%v)", cfg, err)
+	if cfg, err = LoadFromEnv(""); err != nil || cfg.LogFormat != "text" {
+		t.Fatalf("Text: %q (%v), want text", cfg.LogFormat, err)
 	}
-	for _, v := range [][2]string{{"LOG_FORMAT", "xml"}, {"TRUSTED_PROXIES", "not-an-ip"}} {
-		t.Setenv("LOG_FORMAT", "json")
-		t.Setenv("TRUSTED_PROXIES", "")
-		t.Setenv(v[0], v[1])
-		if _, err := LoadFromEnv(""); err == nil {
-			t.Errorf("%s=%s: expected error", v[0], v[1])
-		}
+	t.Setenv("LOG_FORMAT", "xml")
+	if _, err := LoadFromEnv(""); err == nil {
+		t.Error("LOG_FORMAT=xml: expected error")
 	}
 }
 

@@ -57,9 +57,13 @@ Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
   channel reads only the body.
 - The channel unpacks the message and relays it to core's sync endpoint: the
   ciphertext as the raw request body, the id as `Logos-Build-Id`, and the
-  client's IP address as `Logos-Peer-Address` (the peer, or the client a
-  trusted proxy forwarded for: `TRUSTED_PROXIES`; for a WebSocket, the
-  handshake's, on every frame). See the docs' [Channel ↔ Core: HTTP
+  client's IP address as `Logos-Peer-Address`: the leftmost address in
+  `X-Forwarded-For`, else `X-Real-IP`, else the peer (for a WebSocket, the
+  handshake's, on every frame). Every proxy in front of the channel is
+  believed, whatever its address: behind nginx, a redirector or a CDN,
+  have it set `X-Forwarded-For` (or `X-Real-IP`), or every session shows
+  the proxy's address. A client that reaches the channel directly can name
+  any address in those headers. See the docs' [Channel ↔ Core: HTTP
   Sync](https://logoscore.github.io/logos-docs/contracts/channel-core-sync/).
   Nothing is re-encoded on the way.
 
@@ -297,7 +301,6 @@ Environment variables:
 - `LOGOS_CORE_CA_FILE`, `LOGOS_CORE_CERT_SHA256`, `LOGOS_CORE_TLS_INSECURE` (default: none: the system's trust) — how the channel trusts core's certificate over HTTPS, for a self-signed one: a PEM to trust, the certificate's SHA-256 fingerprint, or no verification at all; see [How modules reach core](https://logoscore.github.io/logos-docs/core-infrastructure/#how-modules-reach-core)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
-- `TRUSTED_PROXIES` (default: empty) — comma-separated IPs/CIDRs whose `X-Forwarded-For` / `X-Real-IP` is believed for `client_ip`, which is also what core gets as the message's `Logos-Peer-Address` (the session's external address). Behind a redirector or CDN, list it here and have it forward `X-Forwarded-For`, or every session shows the redirector's address
 - `HEALTH_LISTEN_ADDR` (default: `:8081`) — internal health server, same forms as `LISTEN_ADDR`
 - `MAX_BODY_BYTES` (default: `1048576`) — max client request body, 17 to 1 GiB
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_VHOST`

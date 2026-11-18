@@ -50,11 +50,11 @@ func (l *requestLog) fail(level slog.Level, outcome, stage string, err error) {
 // log writes the request line. The body itself is never logged. Nothing is
 // built when the line would be dropped (served requests at the default info
 // level); the hub's Enabled already counts a viewer asking for debug.
-func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Prefix) {
+func (l *requestLog) log(r *http.Request, w *countingWriter) {
 	if !slog.Default().Enabled(r.Context(), l.level) {
 		return
 	}
-	attrs := append([]slog.Attr{slog.String("request_id", l.id)}, clientAttrs(r, trusted)...)
+	attrs := append([]slog.Attr{slog.String("request_id", l.id)}, clientAttrs(r)...)
 	attrs = append(attrs, slog.Int64("body_bytes", l.bodyBytes))
 	if l.coreTime > 0 {
 		attrs = append(attrs, slog.Int("core_status", l.coreStatus), slog.Float64("core_ms", ms(l.coreTime)))
@@ -79,10 +79,10 @@ func (l *requestLog) log(r *http.Request, w *countingWriter, trusted []netip.Pre
 
 // clientAttrs describes the client and its request (a plain request, or the
 // handshake of a WebSocket connection). Headers are added separately, last.
-func clientAttrs(r *http.Request, trusted []netip.Prefix) []slog.Attr {
+func clientAttrs(r *http.Request) []slog.Attr {
 	return []slog.Attr{
 		slog.String("remote_addr", r.RemoteAddr),
-		slog.String("client_ip", clientIP(r, trusted)),
+		slog.String("client_ip", clientIP(r)),
 		slog.String("proto", r.Proto),
 		slog.String("host", r.Host),
 		slog.String("method", r.Method),
@@ -97,47 +97,28 @@ func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 // peerAddress is clientIP as core gets it (Logos-Peer-Address): an IP
 // address, or "" when the peer or its proxy named something else.
-func peerAddress(r *http.Request, trusted []netip.Prefix) string {
-	a, err := netip.ParseAddr(clientIP(r, trusted))
+func peerAddress(r *http.Request) string {
+	a, err := netip.ParseAddr(clientIP(r))
 	if err != nil {
 		return ""
 	}
 	return a.Unmap().String()
 }
 
-// clientIP is the peer address, or, when the peer is a trusted proxy, the
-// client it forwarded for: the rightmost X-Forwarded-For entry that is not
-// itself a trusted proxy, else X-Real-IP. Headers from untrusted peers are
-// ignored, since anyone can send them.
-func clientIP(r *http.Request, trusted []netip.Prefix) string {
+// clientIP is the client as the proxies in front of the channel name it: the
+// leftmost address in X-Forwarded-For (the client the first proxy saw), else
+// X-Real-IP, else the peer itself. Every proxy is believed, whatever its
+// address: nginx on the host, a redirector, a CDN. Hops that name no address
+// ("unknown", empty) are skipped.
+func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	peer, err := netip.ParseAddr(host)
-	if err != nil || !isTrusted(peer, trusted) {
-		return host
-	}
-	if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-		hops := strings.Split(strings.Join(xff, ","), ",")
-		for i := len(hops) - 1; i >= 0; i-- {
-			hop := strings.TrimSpace(hops[i])
-			if hop == "" {
-				continue
-			}
-			a, ok := parseHop(hop)
-			if !ok {
-				return hop // not an address; report what the proxy said
-			}
-			if !isTrusted(a, trusted) {
-				return a.String()
-			}
-		}
-		// Every hop is a trusted proxy: the leftmost is the closest we know.
-		if a, ok := parseHop(strings.TrimSpace(hops[0])); ok {
+	for _, hop := range strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",") {
+		if a, ok := parseHop(strings.TrimSpace(hop)); ok {
 			return a.String()
 		}
-		return host
 	}
 	if a, ok := parseHop(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ok {
 		return a.String()
@@ -155,16 +136,6 @@ func parseHop(s string) (netip.Addr, bool) {
 		return ap.Addr().Unmap(), true
 	}
 	return netip.Addr{}, false
-}
-
-func isTrusted(a netip.Addr, trusted []netip.Prefix) bool {
-	a = a.Unmap()
-	for _, p := range trusted {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
 }
 
 // countingWriter records the status and how many body bytes were written.

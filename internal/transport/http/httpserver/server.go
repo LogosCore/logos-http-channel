@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -83,7 +82,6 @@ type Handler struct {
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
-	trusted  atomic.Pointer[[]netip.Prefix]
 
 	requests, succeeded, failed, coreErrors, rejected, tooLarge atomic.Int64
 	lastCoreErr                                                 atomic.Pointer[coreError]
@@ -150,17 +148,6 @@ func (h *Handler) SetConfig(cfg RuntimeConfig) {
 // Config returns the current runtime config.
 func (h *Handler) Config() RuntimeConfig { return *h.cfg.Load() }
 
-// SetTrustedProxies sets the peers whose X-Forwarded-For / X-Real-IP is
-// believed for the logged client_ip.
-func (h *Handler) SetTrustedProxies(p []netip.Prefix) { h.trusted.Store(&p) }
-
-func (h *Handler) trustedProxies() []netip.Prefix {
-	if p := h.trusted.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
 // SetDraining toggles drain mode: while draining every request and
 // WebSocket handshake gets a 404, and open WebSockets are closed gently.
 func (h *Handler) SetDraining(v bool) {
@@ -215,7 +202,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// One line per request, written when it ends. Successful requests log at
 	// debug, client mistakes at info, core trouble at warn.
 	rl := &requestLog{id: protocol.NewID(), start: time.Now(), level: slog.LevelDebug, msg: "request served", outcome: outcomeOK}
-	defer rl.log(r, w, h.trustedProxies())
+	defer rl.log(r, w)
 	fail := func(level slog.Level, outcome, stage string, err error) {
 		h.failed.Add(1)
 		rl.fail(level, outcome, stage, err)
@@ -252,7 +239,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := h.relay(r.Context(), rl.id, id, peerAddress(r, h.trustedProxies()), data)
+	res := h.relay(r.Context(), rl.id, id, peerAddress(r), data)
 	rl.coreStatus, rl.coreTime = res.coreStatus, res.coreTime
 	if res.err != nil {
 		fail(res.level, res.outcome, res.stage, res.err)

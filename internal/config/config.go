@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -28,9 +27,6 @@ type Config struct {
 	RabbitMQURL string
 	// LogFormat is the stderr log format: "json" (default) or "text".
 	LogFormat string
-	// TrustedProxies are the peers whose X-Forwarded-For / X-Real-IP is
-	// believed when logging the client IP.
-	TrustedProxies []netip.Prefix
 }
 
 // Body size bounds: the smallest valid message (offset byte plus raw UUID),
@@ -102,12 +98,6 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 		return Config{}, fmt.Errorf("LOG_FORMAT must be json or text")
 	}
 
-	proxies, err := parsePrefixes(os.Getenv("TRUSTED_PROXIES"))
-	if err != nil {
-		return Config{}, fmt.Errorf("TRUSTED_PROXIES: %w", err)
-	}
-	cfg.TrustedProxies = proxies
-
 	return cfg, nil
 }
 
@@ -127,25 +117,4 @@ func listenAddr(key, fallback string) (string, error) {
 		return "", fmt.Errorf("%s must be a port or host:port (e.g. :8080), got %q", key, v)
 	}
 	return v, nil
-}
-
-// parsePrefixes parses a comma-separated list of IPs and CIDRs.
-func parsePrefixes(s string) ([]netip.Prefix, error) {
-	var out []netip.Prefix
-	for _, f := range strings.Split(s, ",") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		if p, err := netip.ParsePrefix(f); err == nil {
-			out = append(out, p.Masked())
-			continue
-		}
-		a, err := netip.ParseAddr(f)
-		if err != nil {
-			return nil, fmt.Errorf("%q is not an IP or CIDR", f)
-		}
-		out = append(out, netip.PrefixFrom(a, a.BitLen()))
-	}
-	return out, nil
 }

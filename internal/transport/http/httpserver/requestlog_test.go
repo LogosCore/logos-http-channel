@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -165,20 +164,21 @@ func TestRequestLogFailures(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	cases := []struct {
 		name, remote, xff, real, want string
 	}{
-		{"untrusted peer ignores headers", "203.0.113.5:4000", "1.2.3.4", "5.6.7.8", "203.0.113.5"},
-		{"trusted peer, rightmost untrusted hop", "10.0.0.2:4000", "1.2.3.4, 198.51.100.9, 10.0.0.7", "", "198.51.100.9"},
-		{"trusted peer, real ip", "10.0.0.2:4000", "", "198.51.100.1", "198.51.100.1"},
-		{"trusted peer, no headers", "10.0.0.2:4000", "", "", "10.0.0.2"},
+		{"no headers: the peer", "203.0.113.5:4000", "", "", "203.0.113.5"},
+		{"nginx on the docker host", "172.18.0.1:40000", "203.0.113.7", "203.0.113.7", "203.0.113.7"},
+		{"any peer's proxy headers", "203.0.113.5:4000", "1.2.3.4", "5.6.7.8", "1.2.3.4"},
+		{"leftmost hop", "10.0.0.2:4000", "198.51.100.9, 10.0.0.7, 172.18.0.1", "", "198.51.100.9"},
+		{"real ip", "10.0.0.2:4000", "", "198.51.100.1", "198.51.100.1"},
 		{"ipv6 peer", "[2001:db8::1]:4000", "", "", "2001:db8::1"},
 		{"hop with port", "10.0.0.2:4000", "198.51.100.9:5555", "", "198.51.100.9"},
-		{"empty hops skipped", "10.0.0.2:4000", "198.51.100.9, ,", "", "198.51.100.9"},
-		{"all hops trusted", "10.0.0.2:4000", "10.0.0.5, 10.0.0.7", "", "10.0.0.5"},
-		{"real ip ignored when xff present", "10.0.0.2:4000", "198.51.100.9", "6.6.6.6", "198.51.100.9"},
-		{"unparsable real ip", "10.0.0.2:4000", "", "nonsense", "10.0.0.2"},
+		{"ipv6 hop with port", "10.0.0.2:4000", "[2001:db8::7]:5555", "", "2001:db8::7"},
+		{"empty and unknown hops skipped", "10.0.0.2:4000", " , unknown, 198.51.100.9", "", "198.51.100.9"},
+		{"real ip ignored when xff names one", "10.0.0.2:4000", "198.51.100.9", "6.6.6.6", "198.51.100.9"},
+		{"xff names none: real ip", "10.0.0.2:4000", "unknown", "198.51.100.1", "198.51.100.1"},
+		{"unparsable real ip: the peer", "10.0.0.2:4000", "", "nonsense", "10.0.0.2"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -189,29 +189,38 @@ func TestClientIP(t *testing.T) {
 		if c.real != "" {
 			r.Header.Set("X-Real-IP", c.real)
 		}
-		if got := clientIP(r, trusted); got != c.want {
+		if got := clientIP(r); got != c.want {
 			t.Errorf("%s: client_ip = %q, want %q", c.name, got, c.want)
 		}
+	}
+	// Proxies that each add their own X-Forwarded-For line: the first line's
+	// first address.
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.2:4000"
+	r.Header.Add("X-Forwarded-For", "198.51.100.9")
+	r.Header.Add("X-Forwarded-For", "10.0.0.7")
+	if got := clientIP(r); got != "198.51.100.9" {
+		t.Errorf("two header lines: client_ip = %q, want 198.51.100.9", got)
 	}
 }
 
 // What core gets in Logos-Peer-Address: an IP address or nothing.
 func TestPeerAddress(t *testing.T) {
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	for _, c := range []struct{ remote, xff, want string }{
 		{"203.0.113.5:4000", "", "203.0.113.5"},
 		{"[::ffff:203.0.113.5]:4000", "", "203.0.113.5"},
 		{"[2001:db8::1]:4000", "", "2001:db8::1"},
-		{"10.0.0.2:4000", "198.51.100.9", "198.51.100.9"},
-		{"10.0.0.2:4000", "unknown", ""}, // the proxy named no address
-		{"203.0.113.5:4000", "198.51.100.9", "203.0.113.5"},
+		{"172.18.0.1:4000", "198.51.100.9", "198.51.100.9"},
+		{"172.18.0.1:4000", "::ffff:198.51.100.9", "198.51.100.9"},
+		{"172.18.0.1:4000", "unknown", "172.18.0.1"}, // the proxy named no address
+		{"@", "", ""}, // a peer that is no IP address
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.RemoteAddr = c.remote
 		if c.xff != "" {
 			r.Header.Set("X-Forwarded-For", c.xff)
 		}
-		if got := peerAddress(r, trusted); got != c.want {
+		if got := peerAddress(r); got != c.want {
 			t.Errorf("%s via %q: %q, want %q", c.remote, c.xff, got, c.want)
 		}
 	}

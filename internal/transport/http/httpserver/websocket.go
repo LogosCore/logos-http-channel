@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,11 +143,10 @@ type wsState struct {
 func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 	cfg := h.cfg.Load()
 	wcfg := cfg.WebSocket.withDefaults()
-	trusted := h.trustedProxies()
 	c := &wsConn{
 		h:       h,
 		id:      protocol.NewID(),
-		peer:    peerAddress(r, trusted),
+		peer:    peerAddress(r),
 		start:   time.Now(),
 		cfg:     wcfg,
 		maxBody: cfg.MaxBodyBytes,
@@ -161,7 +159,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 		w := &countingWriter{ResponseWriter: rw}
 		http.NotFound(w, r)
 		l := &requestLog{id: c.id, start: c.start, level: level, msg: "websocket refused", outcome: outcome, stage: stage, err: err}
-		l.log(r, w, trusted)
+		l.log(r, w)
 	}
 	if err := validHandshake(r); err != nil {
 		refuse(slog.LevelInfo, outcomeBadRequest, "handshake", err)
@@ -208,7 +206,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 		release()
 		// The handshake was valid; Accept failed on hijacking. It answered.
 		l := &requestLog{id: c.id, start: c.start, level: slog.LevelInfo, msg: "websocket refused", outcome: outcomeBadRequest, stage: "accept", err: err}
-		l.log(r, &countingWriter{ResponseWriter: rw}, trusted)
+		l.log(r, &countingWriter{ResponseWriter: rw})
 		return
 	}
 	h.requests.Add(1)
@@ -237,7 +235,7 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 		go c.goAway(closeShutdown, closeShutdownGrace)
 	}
 	c.run()
-	c.log(r, trusted)
+	c.log(r)
 }
 
 // wsConn is one open connection.
@@ -505,7 +503,7 @@ func (c *wsConn) goAway(reason string, _ time.Duration) {
 
 // log writes the connection's line when it ends: the handshake request (as a
 // request line has it), totals and why it ended.
-func (c *wsConn) log(r *http.Request, trusted []netip.Prefix) {
+func (c *wsConn) log(r *http.Request) {
 	c.logMu.Lock()
 	level, outcome, stage, err, reason := c.level, c.outcome, c.stage, c.err, c.closeReason
 	c.logMu.Unlock()
@@ -519,7 +517,7 @@ func (c *wsConn) log(r *http.Request, trusted []netip.Prefix) {
 	if err != nil {
 		msg = "websocket failed"
 	}
-	attrs := append([]slog.Attr{slog.String("conn_id", c.id)}, clientAttrs(r, trusted)...)
+	attrs := append([]slog.Attr{slog.String("conn_id", c.id)}, clientAttrs(r)...)
 	attrs = append(attrs,
 		slog.Float64("duration_ms", ms(time.Since(c.start))),
 		slog.Int64("frames_in", c.framesIn.Load()),

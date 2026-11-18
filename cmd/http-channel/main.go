@@ -77,7 +77,6 @@ func main() {
 	}, httpserver.RuntimeConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes,
 	})
-	handler.SetTrustedProxies(cfg.TrustedProxies)
 	srv := httpserver.New(cfg.Listen, handler)
 	// Without management (e.g. an env value the manifest rejects) the channel
 	// still serves and registers; core just cannot manage it.
@@ -101,7 +100,7 @@ func main() {
 	}
 	slog.Info("logos-http-channel listening", "addr", srv.Addr, "health", health.Addr, "channel_id", cfg.ChannelID,
 		"core", cfg.CoreBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes,
-		"log_format", cfg.LogFormat, "trusted_proxies", len(cfg.TrustedProxies))
+		"log_format", cfg.LogFormat)
 
 	// The control-plane session outlives ctx: in-flight requests must drain
 	// while core still treats this instance as registered, so it is stopped
