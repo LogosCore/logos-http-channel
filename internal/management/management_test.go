@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	protocol "github.com/logoscore/logos-golang-protocol/protocol"
 	"github.com/logoscore/logos-http-channel/v3/internal/config"
@@ -169,6 +170,85 @@ func TestDrainResumeAndStatus(t *testing.T) {
 
 	if rep := invoke("resume"); rep.Status != protocol.StatusOK || h.Draining() {
 		t.Fatalf("resume: %+v draining=%v", rep.Error, h.Draining())
+	}
+}
+
+// The simulated latency is declared only with SIMULATE_LATENCY: then core
+// sets it live, the status flags it, and clearing it turns it off.
+func TestSimulatedLatency(t *testing.T) {
+	cfg := testConfig("http://core:8002")
+	keys := func(m protocol.ManagementManifest) map[string]bool {
+		out := map[string]bool{}
+		for _, p := range m.Properties {
+			out[p.Key] = true
+		}
+		for _, s := range m.Status {
+			out[s.Key] = true
+		}
+		return out
+	}
+	if k := keys(Manifest(cfg)); k["simulated_latency"] || k["simulated_latency_jitter"] || k["simulating_latency"] {
+		t.Fatal("simulation declared without SIMULATE_LATENCY")
+	}
+	cfg.SimulateLatency = true
+	m := Manifest(cfg)
+	if err := protocol.ValidateManifest(m); err != nil {
+		t.Fatalf("ValidateManifest: %v", err)
+	}
+	if k := keys(m); !k["simulated_latency"] || !k["simulated_latency_jitter"] || !k["simulating_latency"] {
+		t.Fatalf("simulation not declared: %v", k)
+	}
+	for _, p := range m.Properties {
+		if (p.Key == "simulated_latency" && p.Default != "0s") || (p.Key == "simulated_latency_jitter" && p.Default != 0) {
+			t.Errorf("%s defaults to %v", p.Key, p.Default)
+		}
+	}
+
+	h := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{BaseURL: cfg.CoreBaseURL},
+		httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes}, httpserver.WithSimulatedLatency())
+	var level slog.LevelVar
+	s, err := New(cfg, h, &level)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := func(req protocol.Envelope) protocol.ReplyEnvelope { return s.Handle(context.Background(), req) }
+	simulating := func() any {
+		var st protocol.StateGetReply
+		_ = json.Unmarshal(handle(envelope(t, protocol.TypeMgmtStateGet, nil)).Payload, &st)
+		return st.Status["simulating_latency"]
+	}
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{}))
+	if got := h.Config().Latency; got != (httpserver.Latency{}) || simulating() != false {
+		t.Fatalf("at start: %+v simulating %v, want none", got, simulating())
+	}
+	rep := handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 1, Values: map[string]any{
+			"simulated_latency": "345ms", "simulated_latency_jitter": 20,
+		}},
+	}))
+	var out protocol.ConfigApplyReply
+	if err := json.Unmarshal(rep.Payload, &out); err != nil || len(out.Rejected) != 0 {
+		t.Fatalf("reply = %+v (%v)", rep, err)
+	}
+	if got, want := h.Config().Latency, (httpserver.Latency{Delay: 345 * time.Millisecond, Jitter: 20}); got != want || simulating() != true {
+		t.Fatalf("applied: %+v simulating %v, want %+v", got, simulating(), want)
+	}
+	// Out of range: rejected, the latency kept.
+	rep = handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 2, Values: map[string]any{
+			"simulated_latency": "2m", "simulated_latency_jitter": 101,
+		}},
+	}))
+	_ = json.Unmarshal(rep.Payload, &out)
+	if len(out.Rejected) != 2 || h.Config().Latency.Delay != 345*time.Millisecond {
+		t.Errorf("rejected = %+v latency = %+v", out.Rejected, h.Config().Latency)
+	}
+	// Absent from core's values: back to none.
+	handle(envelope(t, protocol.TypeMgmtConfigApply, protocol.ConfigApplyRequest{
+		ManagementConfig: protocol.ManagementConfig{Revision: 3},
+	}))
+	if got := h.Config().Latency; got != (httpserver.Latency{}) || simulating() != false {
+		t.Errorf("cleared: %+v simulating %v, want none", got, simulating())
 	}
 }
 

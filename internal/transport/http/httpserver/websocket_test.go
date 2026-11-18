@@ -26,6 +26,8 @@ type wsCore struct {
 	instances []string
 	peers     []string
 	kinds     []string
+	// got are the payloads core received, in order.
+	got []string
 }
 
 func newWSCore(t *testing.T) *wsCore {
@@ -60,6 +62,9 @@ func newWSCore(t *testing.T) *wsCore {
 			if err != nil {
 				return
 			}
+			c.mu.Lock()
+			c.got = append(c.got, string(f.Data))
+			c.mu.Unlock()
 			out := []protocol.ConnFrame{{ID: f.ID, Data: append([]byte("resp:"), f.Data...)}}
 			if string(f.Data) == "push" {
 				out = append(out, protocol.ConnFrame{ID: f.ID, Data: []byte("pushed")})

@@ -30,6 +30,9 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-logos}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
       RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      # For testing: core can slow every message (simulated_latency, 0s
+      # until set on the channel's page) to reproduce a slow link.
+      SIMULATE_LATENCY: ${SIMULATE_LATENCY:-true}
     # Client port only. The health port (8081) stays unpublished: reach it as
     # http://logos-http-channel:8081/healthz from the logos-core network.
     ports:

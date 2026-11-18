@@ -5,6 +5,16 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## v3.13.0
+
+- **Simulated latency, for testing.** With `SIMULATE_LATENCY=true` the
+  channel declares `simulated_latency` (default `0s`) and
+  `simulated_latency_jitter` (default `0` %), which core sets live: every
+  message waits the latency each way, through requests and WebSockets
+  alike, so a round trip takes twice it longer, and a WebSocket's frames
+  keep their order. The `simulating_latency` status flags it while set.
+  The dev compose file sets `SIMULATE_LATENCY=true`.
+
 ## v3.12.0
 
 - **Every proxy in front is believed; `TRUSTED_PROXIES` is gone.** The

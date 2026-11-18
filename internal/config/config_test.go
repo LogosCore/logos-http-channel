@@ -133,6 +133,25 @@ func TestLoadFromEnv_LogFormat(t *testing.T) {
 	}
 }
 
+// SIMULATE_LATENCY is a boolean, off when unset; anything else stops the
+// channel at start.
+func TestLoadFromEnv_SimulateLatency(t *testing.T) {
+	t.Setenv("SIMULATE_LATENCY", "")
+	if cfg, err := LoadFromEnv(""); err != nil || cfg.SimulateLatency {
+		t.Fatalf("unset: %v (%v), want off", cfg.SimulateLatency, err)
+	}
+	for v, want := range map[string]bool{"true": true, "1": true, " TRUE ": true, "false": false, "0": false} {
+		t.Setenv("SIMULATE_LATENCY", v)
+		if cfg, err := LoadFromEnv(""); err != nil || cfg.SimulateLatency != want {
+			t.Errorf("SIMULATE_LATENCY=%q: %v (%v), want %v", v, cfg.SimulateLatency, err, want)
+		}
+	}
+	t.Setenv("SIMULATE_LATENCY", "yes please")
+	if _, err := LoadFromEnv(""); err == nil {
+		t.Error("SIMULATE_LATENCY=yes please: expected error")
+	}
+}
+
 func TestLoadFromEnv_ListenAddrs(t *testing.T) {
 	for v, want := range map[string]string{
 		"8080":           ":8080",

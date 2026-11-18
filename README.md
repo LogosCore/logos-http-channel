@@ -123,6 +123,37 @@ Connections](https://logoscore.github.io/logos-docs/contracts/channel-core-conne
 Behind a reverse proxy, enable WebSocket upgrades and keep its idle timeout
 above `ws_ping_interval` (nginx: `proxy_read_timeout`, 60s by default).
 
+## Simulated latency
+
+For testing: to reproduce what minions see over a slow link, the channel
+can slow every message it carries. With `SIMULATE_LATENCY=true` it declares
+two more management properties, `simulated_latency` (default `0s`) and
+`simulated_latency_jitter` (default `0` %), which core sets live like any
+other. Without it neither exists and nothing is ever delayed.
+
+- **Each way.** A message waits `simulated_latency` on its way to core, and
+  whatever goes back to the minion waits it again, so a round trip takes
+  twice it longer: `345ms` turns a fast link into one with a 690 ms round
+  trip. Through a plain request, the request reaches core a delay late and
+  its answer, a 404 too, takes another to come back. Over a WebSocket the
+  handshake answers a round trip late, and every frame, the minion's and
+  core's (replies and pushes alike), goes on a delay after it came.
+- **Jitter** spreads each delay at random by up to that percent of it,
+  either way: with `50`, a `345ms` delay is anything from 172 to 517 ms.
+- **A WebSocket stays a stream.** Its frames keep their order whatever the
+  jitter: one never overtakes the one before it, as a TCP connection's bytes
+  do. A burst is not spread out: each frame waits its own delay, so core's
+  push sent right after a reply arrives with it. A close, either side's,
+  reaches the other after the frames sent before it. Pings are answered at
+  once (they are not messages).
+- **At `0s`** frames go straight on, as without the setting, unless frames
+  are still on their way ahead of them.
+
+While a latency is set, the `simulating_latency` status value is `true`,
+highlighted in core's UI, and the channel logs a warning saying so. A
+request line says how much of its `duration_ms` was simulated
+(`simulated_latency_ms`).
+
 ## A minion behind another
 
 A minion that cannot reach the channel can check in through one that can: a
@@ -160,6 +191,8 @@ Properties (defaults are the env values the process started with):
 | `ws_max_connections` | int | live | open WebSockets at once, default 1000; further handshakes get a 404 |
 | `ws_ping_interval` | duration | live (new connections) | default `30s`, 5s to 5m |
 | `ws_idle_timeout` | duration | live (new connections) | default `5m`, 10s to 24h |
+| `simulated_latency` | duration | live | only with `SIMULATE_LATENCY`: added to every message each way, default `0s`, 0s to 1m ([Simulated latency](#simulated-latency)) |
+| `simulated_latency_jitter` | int (%) | live | only with `SIMULATE_LATENCY`: each delay's random spread, either way, default `0`, 0 to 100 |
 
 How the channel reaches core (`LOGOS_CORE_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.
@@ -184,7 +217,8 @@ unreachable, non-200 or invalid reply, both transports),
 `rejected_by_core_total` (core 403: not registered), `too_large_total`
 (request bodies and WebSocket messages over `max_body_bytes`, both
 transports), `last_core_error`, `last_core_error_at`, `draining` (highlighted
-when `true`).
+when `true`), and with `SIMULATE_LATENCY` `simulating_latency` (highlighted
+when `true`: a latency is set).
 
 ## Minion connection schema
 
@@ -245,8 +279,9 @@ nothing is redacted), `core_status` and `core_ms` (when core was called),
 `status`, `response_bytes`, `duration_ms`, `outcome` (`ok`, `draining`,
 `bad_request`, `too_large`, `refused`, `core_error`, `rejected_by_core`,
 `client_gone`; a WebSocket's line also `closed`, a handshake refused past
-`ws_max_connections` `too_many_connections`), and `stage` / `err` on
-failure. The body is never logged.
+`ws_max_connections` `too_many_connections`), `simulated_latency_ms` (the
+part of `duration_ms` a [simulated latency](#simulated-latency) took, when
+one is set), and `stage` / `err` on failure. The body is never logged.
 
 Logs (`log/slog`, JSON or text on stderr) can also be tailed live from the module's
 Logs tab in core: the channel declares the `logs` capability and streams
@@ -306,6 +341,7 @@ Environment variables:
 - `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USER` / `RABBITMQ_VHOST`
   (defaults: `localhost` / `5672` / `logos` / `/`) — core's control-plane broker
 - `RABBITMQ_PASSWORD` (required) — the broker's password, logos-core's `RABBITMQ_DEFAULT_PASS`
+- `SIMULATE_LATENCY` (default: `false`) — for testing: declares the `simulated_latency` and `simulated_latency_jitter` properties, with which core can slow every message the channel carries ([Simulated latency](#simulated-latency)); `true` or `false`
 
 `.env` fallback: pass path with `--config <path>`. Existing env vars take precedence.
 
@@ -315,7 +351,9 @@ Start logos-core (`make services`), put `RABBITMQ_PASSWORD` (core's
 `RABBITMQ_DEFAULT_PASS`) in `.env`, then `docker compose up -d --build`. The
 channel runs as its own stack on host port 8090 (`HTTP_CHANNEL_PORT`) and joins
 the `logos-core_logos` network. A minion run on the host reaches it at
-`http://localhost:8090` (its `base_url`).
+`http://localhost:8090` (its `base_url`). The compose file sets
+`SIMULATE_LATENCY=true`: set `simulated_latency` on the channel's page in
+core to reproduce a slow link.
 
 `docker compose` reads `.env` too, and a core URL or broker host set there
 wins over the compose file's, which reach core inside the network: for the

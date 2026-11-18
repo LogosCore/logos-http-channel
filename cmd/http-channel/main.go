@@ -71,12 +71,18 @@ func main() {
 	if _, err := coretls.Client(); err != nil {
 		log.Fatalf("core TLS: %v", err)
 	}
+	var opts []httpserver.Option
+	if cfg.SimulateLatency {
+		// For testing: core can slow every message (simulated_latency).
+		opts = append(opts, httpserver.WithSimulatedLatency())
+		slog.Warn("SIMULATE_LATENCY is set: core can slow every message the channel carries (simulated_latency, 0s until set)")
+	}
 	handler := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{
 		BaseURL:     cfg.CoreBaseURL,
 		SyncTimeout: cfg.CoreSyncTimeout,
 	}, httpserver.RuntimeConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes,
-	})
+	}, opts...)
 	srv := httpserver.New(cfg.Listen, handler)
 	// Without management (e.g. an env value the manifest rejects) the channel
 	// still serves and registers; core just cannot manage it.

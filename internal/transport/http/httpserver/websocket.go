@@ -195,6 +195,16 @@ func (h *Handler) serveWebSocket(rw http.ResponseWriter, r *http.Request) {
 		ws.reserved--
 		ws.mu.Unlock()
 	}
+	// A slow link, simulated (latency.go): the handshake is answered a
+	// round trip late.
+	if d := h.lag(cfg) + h.lag(cfg); d > 0 && !sleep(r.Context(), d) {
+		release()
+		h.requests.Add(1)
+		l := &requestLog{id: c.id, start: c.start, level: slog.LevelInfo, msg: "websocket failed", outcome: outcomeClientGone,
+			stage: "simulated latency", err: r.Context().Err(), lagged: d}
+		l.log(r, &countingWriter{ResponseWriter: rw})
+		return
+	}
 
 	// Minions are not browsers: no Origin check (it protects cookies a
 	// browser would send). Payloads are encrypted: compression gains nothing.
@@ -257,6 +267,16 @@ type wsConn struct {
 	// active is when the minion last sent a frame or answered a ping (unix
 	// nanoseconds).
 	active atomic.Int64
+	// lagIn and lagOut hold the minion's frames on their way to core and
+	// core's on their way to the minion while the handler simulates latency
+	// (latency.go); nil when it does not. A frame with no delay and none
+	// ahead of it goes straight on.
+	lagIn  *delayLine[inFrame]
+	lagOut *delayLine[[]byte]
+	// coreGone: core's socket closed, and its close is on its way to the
+	// minion behind core's last frames: what the minion sends meanwhile is
+	// dropped, as it would be at the connection that closed.
+	coreGone atomic.Bool
 
 	going     atomic.Bool // closing gently: frames read meanwhile are dropped
 	ending    atomic.Bool // closing: core's socket closes because this one does
@@ -275,16 +295,34 @@ type wsConn struct {
 
 func (c *wsConn) touch() { c.active.Store(time.Now().UnixNano()) }
 
+// inFrame is one of the minion's messages for core: the id it was sent
+// under, its ciphertext, and the frame's size.
+type inFrame struct {
+	id   string
+	enc  []byte
+	size int
+}
+
 // run reads the minion's frames until the connection ends, carrying each to
-// core.
+// core: at once, or after its simulated latency.
 func (c *wsConn) run() {
 	c.touch()
 	go c.pinger()
 	go c.watchdog()
+	if c.h.simulate {
+		c.lagIn, c.lagOut = newDelayLine[inFrame](), newDelayLine[[]byte]()
+		// Closing: a frame still on its way is dropped, as one read now is.
+		go c.lagIn.run(c.ctx, func(f inFrame) bool { return c.going.Load() || c.relay(f) })
+		go c.lagOut.run(c.ctx, c.toMinion)
+	}
+	// The minion's side ended (it closed, or the link died): what it sent
+	// before still reaches core.
+	ended := false
 	for {
 		typ, data, err := c.conn.Read(c.ctx)
 		if err != nil {
 			c.readEnded(err)
+			ended = c.ctx.Err() == nil && !c.going.Load()
 			break
 		}
 		c.touch()
@@ -302,18 +340,44 @@ func (c *wsConn) run() {
 			c.fail(slog.LevelInfo, outcomeBadRequest, "unpack", err, closeBadFrame)
 			break
 		}
-		if err := c.toCore(id, enc); err != nil {
-			c.h.coreErrors.Add(1)
-			c.h.ws.failed.Add(1)
-			c.msgFailed.Add(1)
-			c.fail(slog.LevelWarn, outcomeCoreError, "core", err, closeRelayFailed)
+		f := inFrame{id: id, enc: enc, size: len(data)}
+		if c.lagIn != nil {
+			if d := c.h.lag(c.h.cfg.Load()); d > 0 || c.lagIn.busy() {
+				if !c.lagIn.put(c.ctx, f, d) {
+					break
+				}
+				continue
+			}
+		}
+		if !c.relay(f) {
 			break
 		}
-		c.h.ws.messages.Add(1)
-		slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_core"),
-			slog.Int("body_bytes", len(data)))
+	}
+	if ended && c.lagIn != nil {
+		if d := c.h.lag(c.h.cfg.Load()); d > 0 || c.lagIn.busy() {
+			wait(c.ctx, c.lagIn.after(c.ctx, d))
+		}
 	}
 	c.close(websocket.StatusNormalClosure, "")
+}
+
+// relay carries one of the minion's messages to core; false when that
+// failed, which closes the connection.
+func (c *wsConn) relay(f inFrame) bool {
+	if c.coreGone.Load() {
+		return true
+	}
+	if err := c.toCore(f.id, f.enc); err != nil {
+		c.h.coreErrors.Add(1)
+		c.h.ws.failed.Add(1)
+		c.msgFailed.Add(1)
+		c.fail(slog.LevelWarn, outcomeCoreError, "core", err, closeRelayFailed)
+		return false
+	}
+	c.h.ws.messages.Add(1)
+	slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_core"),
+		slog.Int("body_bytes", f.size))
+	return true
 }
 
 // readEnded records why reading stopped, unless a close we started explains it.
@@ -381,6 +445,14 @@ func (c *wsConn) fromCore(core *connclient.Conn) {
 	for {
 		f, err := core.Receive(c.ctx)
 		if err != nil {
+			// A slow link: the close reaches the minion after what core
+			// sent before it.
+			if c.lagOut != nil {
+				if d := c.h.lag(c.h.cfg.Load()); d > 0 || c.lagOut.busy() {
+					c.coreGone.Store(true)
+					wait(c.ctx, c.lagOut.after(c.ctx, d))
+				}
+			}
 			if c.ctx.Err() == nil && !c.going.Load() && !c.ending.Load() {
 				slog.Info("websocket: core's socket closed, closing the minion's connection",
 					slog.String("conn_id", c.id), slog.String("err", err.Error()))
@@ -393,21 +465,38 @@ func (c *wsConn) fromCore(core *connclient.Conn) {
 		if err != nil {
 			continue
 		}
-		wctx, cancel := context.WithTimeout(c.ctx, wsWriteTimeout)
-		err = c.conn.Write(wctx, websocket.MessageBinary, out)
-		cancel()
-		if err != nil {
-			if c.ctx.Err() == nil {
-				c.setReason(closeWriteFailed)
-				c.close(websocket.StatusNormalClosure, "")
+		if c.lagOut != nil {
+			if d := c.h.lag(c.h.cfg.Load()); d > 0 || c.lagOut.busy() {
+				if !c.lagOut.put(c.ctx, out, d) {
+					return
+				}
+				continue
 			}
+		}
+		if !c.toMinion(out) {
 			return
 		}
-		c.framesOut.Add(1)
-		c.bytesOut.Add(int64(len(out)))
-		slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_minion"),
-			slog.Int("response_bytes", len(out)))
 	}
+}
+
+// toMinion writes one of core's messages, packed, to the minion; false when
+// that failed, which closes the connection.
+func (c *wsConn) toMinion(out []byte) bool {
+	wctx, cancel := context.WithTimeout(c.ctx, wsWriteTimeout)
+	err := c.conn.Write(wctx, websocket.MessageBinary, out)
+	cancel()
+	if err != nil {
+		if c.ctx.Err() == nil {
+			c.setReason(closeWriteFailed)
+			c.close(websocket.StatusNormalClosure, "")
+		}
+		return false
+	}
+	c.framesOut.Add(1)
+	c.bytesOut.Add(int64(len(out)))
+	slog.Debug("websocket message relayed", slog.String("conn_id", c.id), slog.String("direction", "to_minion"),
+		slog.Int("response_bytes", len(out)))
+	return true
 }
 
 // pinger pings every PingInterval; a peer that does not answer within the

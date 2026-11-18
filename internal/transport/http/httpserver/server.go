@@ -35,6 +35,8 @@ type CoreConfig struct {
 type RuntimeConfig struct {
 	MaxBodyBytes int64
 	WebSocket    WebSocketConfig
+	// Latency is applied only by a handler built WithSimulatedLatency.
+	Latency Latency
 }
 
 // Stats is a snapshot of the handler's counters.
@@ -82,6 +84,9 @@ type Handler struct {
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
+	// simulate: the handler delays what it carries by cfg's Latency
+	// (WithSimulatedLatency, latency.go).
+	simulate bool
 
 	requests, succeeded, failed, coreErrors, rejected, tooLarge atomic.Int64
 	lastCoreErr                                                 atomic.Pointer[coreError]
@@ -90,7 +95,7 @@ type Handler struct {
 }
 
 // NewHandler returns a handler forwarding to {core.BaseURL}/api/channel/sync.
-func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
+func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig, opts ...Option) *Handler {
 	if core.SyncTimeout <= 0 {
 		core.SyncTimeout = 30 * time.Second
 	}
@@ -110,6 +115,9 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 		coreBase:    core.BaseURL,
 	}
 	h.ws.conns = map[*wsConn]struct{}{}
+	for _, o := range opts {
+		o(h)
+	}
 	h.SetConfig(cfg)
 	return h
 }
@@ -203,15 +211,32 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// debug, client mistakes at info, core trouble at warn.
 	rl := &requestLog{id: protocol.NewID(), start: time.Now(), level: slog.LevelDebug, msg: "request served", outcome: outcomeOK}
 	defer rl.log(r, w)
+	// A slow link, simulated (latency.go): the request reaches the channel a
+	// delay late, and its answer, whichever it is, takes another to get back.
+	if d := h.lag(cfg); d > 0 {
+		rl.lagged += d
+		if !sleep(r.Context(), d) {
+			rl.fail(slog.LevelInfo, outcomeClientGone, "simulated latency", r.Context().Err())
+			return
+		}
+	}
+	back := func() {
+		if d := h.lag(cfg); d > 0 {
+			rl.lagged += d
+			sleep(r.Context(), d)
+		}
+	}
 	fail := func(level slog.Level, outcome, stage string, err error) {
 		h.failed.Add(1)
 		rl.fail(level, outcome, stage, err)
+		back()
 		http.NotFound(w, r)
 	}
 
 	if h.draining.Load() {
 		h.failed.Add(1)
 		rl.msg, rl.outcome = "request refused", outcomeDraining
+		back()
 		http.NotFound(w, r)
 		return
 	}
@@ -246,6 +271,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	back()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = w.Write(res.reply)
 	h.succeeded.Add(1)

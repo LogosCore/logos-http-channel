@@ -27,6 +27,10 @@ type Config struct {
 	RabbitMQURL string
 	// LogFormat is the stderr log format: "json" (default) or "text".
 	LogFormat string
+	// SimulateLatency (SIMULATE_LATENCY) declares the simulated_latency and
+	// simulated_latency_jitter properties, with which core can slow every
+	// message the channel carries, to reproduce a slow link. For testing.
+	SimulateLatency bool
 }
 
 // Body size bounds: the smallest valid message (offset byte plus raw UUID),
@@ -96,6 +100,12 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 	cfg.LogFormat = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))
 	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
 		return Config{}, fmt.Errorf("LOG_FORMAT must be json or text")
+	}
+
+	if v := strings.TrimSpace(os.Getenv("SIMULATE_LATENCY")); v != "" {
+		if cfg.SimulateLatency, err = strconv.ParseBool(v); err != nil {
+			return Config{}, fmt.Errorf("SIMULATE_LATENCY must be true or false, got %q", v)
+		}
 	}
 
 	return cfg, nil

@@ -1,9 +1,10 @@
 // Package management declares what core may manage on this channel (body
 // limit and log level; drain/resume/check_core actions, each available only
-// when it changes something; request counters) and
-// binds it to the client handler. How the channel reaches core (sync URL,
-// timeout) is env-only and deliberately not manageable. Core drives it over the
-// module's rpc_queue via logos-golang-module-core pkg/mgmt.
+// when it changes something; request counters; with SIMULATE_LATENCY, a
+// simulated latency for testing) and binds it to the client handler. How the
+// channel reaches core (sync URL, timeout) is env-only and deliberately not
+// manageable. Core drives it over the module's rpc_queue via
+// logos-golang-module-core pkg/mgmt.
 package management
 
 import (
@@ -64,8 +65,42 @@ const (
 )
 
 // Manifest builds the management manifest. Each property's default is the
-// value this process runs with from its env config.
+// value this process runs with from its env config; the simulation's are
+// declared only with SIMULATE_LATENCY.
 func Manifest(cfg config.Config) protocol.ManagementManifest {
+	m := manifest(cfg)
+	if cfg.SimulateLatency {
+		m.Properties = append(m.Properties, simulationProperties...)
+		m.Status = append(m.Status, simulationStatus)
+	}
+	return m
+}
+
+// simulationProperties slow every message the channel carries, to reproduce
+// a slow link (SIMULATE_LATENCY; httpserver's latency.go).
+var simulationProperties = []protocol.PropertySpec{
+	{FieldSpec: protocol.FieldSpec{
+		Key: "simulated_latency", Type: protocol.FieldDuration, Label: "Simulated latency",
+		Description: "For testing: a delay added to every message the channel carries, each way (minion to core, core to the minion), through requests and WebSockets alike, so a round trip takes twice it longer: 345ms makes a round trip of 690ms. A WebSocket's handshake answers a round trip late, and its messages keep their order. 0s adds none. Declared because SIMULATE_LATENCY is set.",
+		Group:       "Simulation", Order: 7,
+		Default: "0s", Min: "0s", Max: "1m",
+	}, Apply: protocol.ApplyLive},
+	{FieldSpec: protocol.FieldSpec{
+		Key: "simulated_latency_jitter", Type: protocol.FieldInt, Label: "Simulated latency jitter",
+		Description: "Random spread of each simulated delay, in percent of it, either way: with 50, a 345ms latency is anything from 172ms to 517ms. A WebSocket message still never overtakes the one before it.",
+		Group:       "Simulation", Order: 8, Unit: "%",
+		Default: 0, Min: 0, Max: 100,
+	}, Apply: protocol.ApplyLive},
+}
+
+// simulationStatus flags a channel slowed on purpose.
+var simulationStatus = protocol.StatusSpec{
+	Key: "simulating_latency", Type: protocol.FieldBool, Label: "Simulating latency",
+	Description: "Every message waits the simulated latency: the channel is slow on purpose until it is 0s.",
+	Alert:       true,
+}
+
+func manifest(cfg config.Config) protocol.ManagementManifest {
 	// Keep an env value above the cap valid rather than refusing to start.
 	bodyMax := max(int64(maxBodyBytes), cfg.MaxBodyBytes)
 	return protocol.ManagementManifest{
@@ -200,9 +235,13 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	if n, ok := protocol.AsInt64(live["ws_max_connections"]); ok {
 		next.WebSocket.MaxConnections = int(n)
 	}
+	if n, ok := protocol.AsInt64(live["simulated_latency_jitter"]); ok {
+		next.Latency.Jitter = int(n)
+	}
 	for key, dst := range map[string]*time.Duration{
-		"ws_ping_interval": &next.WebSocket.PingInterval,
-		"ws_idle_timeout":  &next.WebSocket.IdleTimeout,
+		"ws_ping_interval":  &next.WebSocket.PingInterval,
+		"ws_idle_timeout":   &next.WebSocket.IdleTimeout,
+		"simulated_latency": &next.Latency.Delay,
 	} {
 		if v := live[key]; v != nil {
 			d, err := protocol.ParseDuration(v)
@@ -219,10 +258,23 @@ func apply(ctx context.Context, h *httpserver.Handler, level *slog.LevelVar, liv
 	h.SetConfig(next)
 	level.Set(lvl)
 	ws := next.WebSocket
-	slog.Info("management: config applied", "by", actorName(mgmt.ActorFromContext(ctx)),
+	attrs := []any{"by", actorName(mgmt.ActorFromContext(ctx)),
 		"max_body_bytes", next.MaxBodyBytes, "log_level", lvl.String(),
 		"ws_max_connections", ws.MaxConnections,
-		"ws_ping_interval", ws.PingInterval.String(), "ws_idle_timeout", ws.IdleTimeout.String())
+		"ws_ping_interval", ws.PingInterval.String(), "ws_idle_timeout", ws.IdleTimeout.String()}
+	if h.SimulatesLatency() {
+		attrs = append(attrs, "simulated_latency", next.Latency.Delay.String(), "simulated_latency_jitter", next.Latency.Jitter)
+	}
+	slog.Info("management: config applied", attrs...)
+	if h.SimulatesLatency() && next.Latency != prev.Latency {
+		// Said apart, louder: the channel is slow on purpose from now on.
+		if next.Latency.Delay > 0 {
+			slog.Warn("simulating latency: every message waits it, each way", "simulated_latency", next.Latency.Delay.String(),
+				"simulated_latency_jitter", next.Latency.Jitter)
+		} else {
+			slog.Info("simulated latency off")
+		}
+	}
 	return nil
 }
 
@@ -245,6 +297,9 @@ func status(h *httpserver.Handler) map[string]any {
 	if st.LastCoreError != "" {
 		out["last_core_error"] = st.LastCoreError
 		out["last_core_error_at"] = st.LastCoreErrorAt.Format(time.RFC3339)
+	}
+	if h.SimulatesLatency() {
+		out["simulating_latency"] = h.Config().Latency.Delay > 0
 	}
 	return out
 }

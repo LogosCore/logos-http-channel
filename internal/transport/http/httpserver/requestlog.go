@@ -41,6 +41,9 @@ type requestLog struct {
 	bodyBytes  int64
 	coreStatus int
 	coreTime   time.Duration // zero when core was not called
+	// lagged is the simulated latency the request waited (latency.go), part
+	// of its duration.
+	lagged time.Duration
 }
 
 func (l *requestLog) fail(level slog.Level, outcome, stage string, err error) {
@@ -65,6 +68,9 @@ func (l *requestLog) log(r *http.Request, w *countingWriter) {
 		slog.Float64("duration_ms", ms(time.Since(l.start))),
 		slog.String("outcome", l.outcome),
 	)
+	if l.lagged > 0 {
+		attrs = append(attrs, slog.Float64("simulated_latency_ms", ms(l.lagged)))
+	}
 	if l.stage != "" {
 		attrs = append(attrs, slog.String("stage", l.stage))
 	}
