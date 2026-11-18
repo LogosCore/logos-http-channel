@@ -20,7 +20,7 @@ func post(t *testing.T, url string, body []byte) *http.Response {
 func TestHandler_BodyCapChangesLive(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	h := NewHandler("http-main", CoreConfig{BaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
@@ -50,10 +50,10 @@ func TestHandler_CoreTimeout(t *testing.T) {
 		http.Error(w, "late", http.StatusInternalServerError)
 	}))
 	defer slow.Close()
-	if d := NewHandler("http-main", CoreConfig{SyncBaseURL: slow.URL}, RuntimeConfig{}); d.syncTimeout != 30*time.Second {
+	if d := NewHandler("http-main", CoreConfig{BaseURL: slow.URL}, RuntimeConfig{}); d.syncTimeout != 30*time.Second {
 		t.Fatalf("defaults: timeout=%s config=%+v", d.syncTimeout, d.Config())
 	}
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: slow.URL, SyncTimeout: 50 * time.Millisecond},
+	h := NewHandler("http-main", CoreConfig{BaseURL: slow.URL, SyncTimeout: 50 * time.Millisecond},
 		RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
@@ -77,7 +77,7 @@ func TestHandler_Counters(t *testing.T) {
 	}))
 	defer forbidden.Close()
 
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	h := NewHandler("http-main", CoreConfig{BaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 	_ = post(t, ts.URL, buildPayload(0, []byte("ok"), testUUID)).Body.Close()
@@ -88,7 +88,7 @@ func TestHandler_Counters(t *testing.T) {
 		t.Fatalf("stats = %+v", st)
 	}
 
-	h403 := NewHandler("http-main", CoreConfig{SyncBaseURL: forbidden.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	h403 := NewHandler("http-main", CoreConfig{BaseURL: forbidden.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts403 := httptest.NewServer(h403)
 	defer ts403.Close()
 	assertPlain404(t, post(t, ts403.URL, buildPayload(0, []byte("x"), testUUID)), "403")
@@ -101,7 +101,7 @@ func TestHandler_Counters(t *testing.T) {
 func TestHandler_DrainResume(t *testing.T) {
 	core := newTestLogosCore(t)
 	defer core.Close()
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	h := NewHandler("http-main", CoreConfig{BaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 	payload := buildPayload(0, []byte("x"), testUUID)

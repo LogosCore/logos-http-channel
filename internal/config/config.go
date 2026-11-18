@@ -14,11 +14,14 @@ import (
 )
 
 type Config struct {
-	ChannelID        string
-	Listen           string
-	LogosSyncBaseURL string
-	HealthListen     string
-	MaxBodyBytes     int64
+	ChannelID string
+	Listen    string
+	// CoreBaseURL is core's base URL (LOGOS_CORE_BASE_URL), without a
+	// trailing slash: the sync call and the WebSockets' connection sockets
+	// go under it.
+	CoreBaseURL  string
+	HealthListen string
+	MaxBodyBytes int64
 	// CoreSyncTimeout bounds each client request's wait for core's sync reply.
 	CoreSyncTimeout time.Duration
 	// RabbitMQURL is the AMQP URL for registering with core's control plane.
@@ -51,8 +54,11 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 	}
 
 	cfg := Config{
-		ChannelID:        envOrDefault("CHANNEL_ID", "http-main"),
-		LogosSyncBaseURL: envOrDefault("LOGOS_SYNC_BASE_URL", "http://localhost:8002"),
+		ChannelID:   envOrDefault("CHANNEL_ID", "http-main"),
+		CoreBaseURL: strings.TrimRight(envOrDefault("LOGOS_CORE_BASE_URL", "http://localhost:8002"), "/"),
+	}
+	if u, err := url.Parse(cfg.CoreBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return Config{}, fmt.Errorf("LOGOS_CORE_BASE_URL must be http(s)://host[:port], got %q", cfg.CoreBaseURL)
 	}
 
 	var err error
@@ -101,10 +107,6 @@ func LoadFromEnv(envFilePath string) (Config, error) {
 		return Config{}, fmt.Errorf("TRUSTED_PROXIES: %w", err)
 	}
 	cfg.TrustedProxies = proxies
-
-	if cfg.LogosSyncBaseURL == "" {
-		return Config{}, fmt.Errorf("LOGOS_SYNC_BASE_URL is required")
-	}
 
 	return cfg, nil
 }

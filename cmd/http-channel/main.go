@@ -72,7 +72,7 @@ func main() {
 		log.Fatalf("core TLS: %v", err)
 	}
 	handler := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{
-		SyncBaseURL: cfg.LogosSyncBaseURL,
+		BaseURL:     cfg.CoreBaseURL,
 		SyncTimeout: cfg.CoreSyncTimeout,
 	}, httpserver.RuntimeConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes,
@@ -100,7 +100,7 @@ func main() {
 		}()
 	}
 	slog.Info("logos-http-channel listening", "addr", srv.Addr, "health", health.Addr, "channel_id", cfg.ChannelID,
-		"logos", cfg.LogosSyncBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes,
+		"core", cfg.CoreBaseURL, "core_sync_timeout", cfg.CoreSyncTimeout, "max_body_bytes", cfg.MaxBodyBytes,
 		"log_format", cfg.LogFormat, "trusted_proxies", len(cfg.TrustedProxies))
 
 	// The control-plane session outlives ctx: in-flight requests must drain

@@ -365,7 +365,7 @@ func (c *wsConn) coreConn() (*connclient.Conn, error) {
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, c.h.syncTimeout)
 	defer cancel()
-	core, err := connclient.Dial(ctx, connclient.Options{BaseURL: c.h.syncBase, Instance: c.h.channelID,
+	core, err := connclient.Dial(ctx, connclient.Options{BaseURL: c.h.coreBase, Instance: c.h.channelID,
 		Kind: protocol.KindReversePersistent, Peer: c.peer, HTTPClient: c.h.client, MaxFrame: c.maxBody})
 	if err != nil {
 		return nil, err

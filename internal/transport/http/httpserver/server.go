@@ -25,7 +25,9 @@ const uuidLen = 16
 // CoreConfig is how the handler reaches core. It comes from the env only and
 // is fixed for the process lifetime.
 type CoreConfig struct {
-	SyncBaseURL string
+	// BaseURL is core's base URL: the sync call (/api/channel/sync) and the
+	// WebSockets' connection sockets (/api/channel/connection) go under it.
+	BaseURL string
 	// SyncTimeout bounds each request's wait for core's reply (default 30s).
 	SyncTimeout time.Duration
 }
@@ -76,8 +78,8 @@ type Handler struct {
 	client      *http.Client
 	syncURL     string
 	syncTimeout time.Duration
-	// syncBase is core's base URL: connection sockets open under it.
-	syncBase string
+	// coreBase is core's base URL: connection sockets open under it.
+	coreBase string
 
 	cfg      atomic.Pointer[RuntimeConfig]
 	draining atomic.Bool
@@ -89,7 +91,7 @@ type Handler struct {
 	ws wsState
 }
 
-// NewHandler returns a handler forwarding to {core.SyncBaseURL}/api/channel/sync.
+// NewHandler returns a handler forwarding to {core.BaseURL}/api/channel/sync.
 func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 	if core.SyncTimeout <= 0 {
 		core.SyncTimeout = 30 * time.Second
@@ -105,9 +107,9 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 		channelID: channelID,
 		// Timeouts are per request (syncTimeout).
 		client:      client,
-		syncURL:     SyncURL(core.SyncBaseURL),
+		syncURL:     SyncURL(core.BaseURL),
 		syncTimeout: core.SyncTimeout,
-		syncBase:    core.SyncBaseURL,
+		coreBase:    core.BaseURL,
 	}
 	h.ws.conns = map[*wsConn]struct{}{}
 	h.SetConfig(cfg)
@@ -115,8 +117,8 @@ func NewHandler(channelID string, core CoreConfig, cfg RuntimeConfig) *Handler {
 }
 
 // SyncURL returns core's sync endpoint for a base URL.
-func SyncURL(syncBaseURL string) string {
-	return strings.TrimRight(syncBaseURL, "/") + "/api/channel/sync"
+func SyncURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/api/channel/sync"
 }
 
 // New returns the client-facing server for h. Every request, whatever its

@@ -15,7 +15,7 @@ import (
 )
 
 func testConfig(syncURL string) config.Config {
-	return config.Config{ChannelID: "http-1", LogosSyncBaseURL: syncURL, MaxBodyBytes: 1 << 20}
+	return config.Config{ChannelID: "http-1", CoreBaseURL: syncURL, MaxBodyBytes: 1 << 20}
 }
 
 func TestManifestValid(t *testing.T) {
@@ -49,7 +49,7 @@ func newServer(t *testing.T, syncBaseURL string) (*httpserver.Handler, func(prot
 func newServerWithLevel(t *testing.T, syncBaseURL string) (*httpserver.Handler, *slog.LevelVar, func(protocol.Envelope) protocol.ReplyEnvelope) {
 	t.Helper()
 	cfg := testConfig(syncBaseURL)
-	h := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{SyncBaseURL: cfg.LogosSyncBaseURL}, httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes})
+	h := httpserver.NewHandler(cfg.ChannelID, httpserver.CoreConfig{BaseURL: cfg.CoreBaseURL}, httpserver.RuntimeConfig{MaxBodyBytes: cfg.MaxBodyBytes})
 	var level slog.LevelVar
 	s, err := New(cfg, h, &level)
 	if err != nil {

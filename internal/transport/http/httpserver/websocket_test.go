@@ -93,7 +93,7 @@ func (c *wsCore) dialed() int {
 
 func newWSChannel(t *testing.T, core *wsCore, ws WebSocketConfig) (*Handler, string) {
 	t.Helper()
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.srv.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody, WebSocket: ws})
+	h := NewHandler("http-main", CoreConfig{BaseURL: core.srv.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody, WebSocket: ws})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
 	return h, "ws" + strings.TrimPrefix(ts.URL, "http")

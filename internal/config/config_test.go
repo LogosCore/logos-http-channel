@@ -30,6 +30,27 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	}
 }
 
+// Core's base URL is http(s)://host[:port], kept without a trailing slash;
+// anything else stops the channel at start.
+func TestLoadFromEnv_CoreBaseURL(t *testing.T) {
+	t.Setenv("LOGOS_CORE_BASE_URL", "")
+	cfg, err := LoadFromEnv("")
+	if err != nil || cfg.CoreBaseURL != "http://localhost:8002" {
+		t.Fatalf("default: %q (%v), want http://localhost:8002", cfg.CoreBaseURL, err)
+	}
+	t.Setenv("LOGOS_CORE_BASE_URL", "https://core.example:8443/")
+	cfg, err = LoadFromEnv("")
+	if err != nil || cfg.CoreBaseURL != "https://core.example:8443" {
+		t.Fatalf("got %q (%v), want https://core.example:8443", cfg.CoreBaseURL, err)
+	}
+	for _, v := range []string{"logos-core-dev:8002", "core.example", "ftp://core.example", "http://", "/"} {
+		t.Setenv("LOGOS_CORE_BASE_URL", v)
+		if _, err := LoadFromEnv(""); err == nil {
+			t.Errorf("LOGOS_CORE_BASE_URL=%s: expected error", v)
+		}
+	}
+}
+
 func TestLoadFromEnv_CoreSyncTimeout(t *testing.T) {
 	t.Setenv("CORE_SYNC_TIMEOUT", "5s")
 	cfg, err := LoadFromEnv("")

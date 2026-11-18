@@ -62,7 +62,7 @@ func TestRequestLogServed(t *testing.T) {
 	}))
 	defer spy.Close()
 
-	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{SyncBaseURL: spy.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{BaseURL: spy.URL}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/upload/x?a=1&b=2", bytes.NewReader(buildPayload(3, []byte("abcdef"), testUUID)))
 	req.Header.Set("User-Agent", "agent/1.0")
@@ -116,7 +116,7 @@ func TestRequestLogFailures(t *testing.T) {
 	records := captureLogs(t)
 	core := newTestLogosCore(t)
 	defer core.Close()
-	h := NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	h := NewHandler("http-main", CoreConfig{BaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
@@ -129,7 +129,7 @@ func TestRequestLogFailures(t *testing.T) {
 	down := httptest.NewServer(http.NotFoundHandler())
 	downURL := down.URL
 	down.Close()
-	hDown := NewHandler("http-main", CoreConfig{SyncBaseURL: downURL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
+	hDown := NewHandler("http-main", CoreConfig{BaseURL: downURL}, RuntimeConfig{MaxBodyBytes: testMaxBody})
 	tsDown := httptest.NewServer(hDown)
 	defer tsDown.Close()
 	_ = post(t, tsDown.URL+"/core-down", buildPayload(0, []byte("x"), testUUID)).Body.Close()
@@ -224,7 +224,7 @@ func TestRequestLogSkippedWhenDisabled(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	core := newTestLogosCore(t)
 	defer core.Close()
-	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{SyncBaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
+	ts := httptest.NewServer(NewHandler("http-main", CoreConfig{BaseURL: core.URL()}, RuntimeConfig{MaxBodyBytes: testMaxBody}))
 	defer ts.Close()
 	_ = post(t, ts.URL, buildPayload(2, []byte("abcd"), testUUID)).Body.Close()
 	if buf.Len() != 0 {

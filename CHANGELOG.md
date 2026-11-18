@@ -5,6 +5,14 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## Unreleased
+
+- **`LOGOS_CORE_BASE_URL`, not `LOGOS_SYNC_BASE_URL`.** Core's base URL
+  takes the name the other modules give it. The old name is not read: a
+  deployment that still sets it gets the default, `http://localhost:8002`,
+  so rename it. The value must be `http(s)://host[:port]` (a trailing
+  slash is dropped), or the channel does not start.
+
 ## v3.10.3
 
 - **Registers again after core or its RabbitMQ was away.** With

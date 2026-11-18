@@ -157,7 +157,7 @@ Properties (defaults are the env values the process started with):
 | `ws_ping_interval` | duration | live (new connections) | default `30s`, 5s to 5m |
 | `ws_idle_timeout` | duration | live (new connections) | default `5m`, 10s to 24h |
 
-How the channel reaches core (`LOGOS_SYNC_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
+How the channel reaches core (`LOGOS_CORE_BASE_URL`, `CORE_SYNC_TIMEOUT`) is
 env-only and not manageable from core.
 
 Actions: `drain` (high risk: every request and WebSocket handshake gets a 404 until `resume`, open WebSockets are closed; shown in the `draining` status value, heartbeat health stays `healthy`),
@@ -293,7 +293,7 @@ Environment variables:
 
 - `CHANNEL_ID` (default: `http-main`)
 - `LISTEN_ADDR` (default: `:8080`) — `host:port`, `:port`, or a bare port (all interfaces)
-- `LOGOS_SYNC_BASE_URL` (default: `http://localhost:8002`) — core's base URL, the name this channel gives what other modules call `LOGOS_CORE_BASE_URL`: the sync call (`/api/channel/sync`) and the WebSockets' sockets (`/api/channel/connection`) go under it
+- `LOGOS_CORE_BASE_URL` (default: `http://localhost:8002`) — core's base URL, `http(s)://host[:port]`: the sync call (`/api/channel/sync`) and the WebSockets' sockets (`/api/channel/connection`) go under it
 - `LOGOS_CORE_CA_FILE`, `LOGOS_CORE_CERT_SHA256`, `LOGOS_CORE_TLS_INSECURE` (default: none: the system's trust) — how the channel trusts core's certificate over HTTPS, for a self-signed one: a PEM to trust, the certificate's SHA-256 fingerprint, or no verification at all; see [How modules reach core](https://logoscore.github.io/logos-docs/core-infrastructure/#how-modules-reach-core)
 - `CORE_SYNC_TIMEOUT` (default: `30s`) — how long a client request waits for core's sync reply
 - `LOG_FORMAT` (default: `json`) — stderr log format, `json` or `text` (logfmt)
@@ -324,7 +324,7 @@ Or with plain `docker run`:
 ```bash
 docker run --network logos-core_logos -p 8080:8080 \
   -e CHANNEL_ID=http-1 \
-  -e LOGOS_SYNC_BASE_URL=http://logos-core-dev:8002 \
+  -e LOGOS_CORE_BASE_URL=http://logos-core-dev:8002 \
   -e RABBITMQ_HOST=logos-rabbitmq -e RABBITMQ_USER=logos -e RABBITMQ_PASSWORD=... \
   ghcr.io/logoscore/logos-http-channel:latest
 ```
