@@ -79,8 +79,10 @@ func sleep(ctx context.Context, d time.Duration) bool {
 
 // lagFrames is the room a WebSocket's delay line has in each direction:
 // beyond it the side putting waits, as a full link pushes back on its
-// sender.
-const lagFrames = 64
+// sender. Enough for a busy minion's frames over a slow round trip (a
+// message every 5 ms for seconds), so that the line, not the link it
+// plays, never sets the pace.
+const lagFrames = 1024
 
 // delayLine hands items on in order, each once its time has come: when it
 // was put plus its delay, and never before the item ahead of it (one
