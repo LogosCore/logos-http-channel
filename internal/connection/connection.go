@@ -18,14 +18,24 @@ import (
 // the current set would read a new one wrongly (a field removed, renamed or
 // given another meaning); a new optional field does not need it.
 //
-// Every field has a number too (FieldSpec.Num, its order's): a minion that
-// reads a minion config reads it by that number alone. A number stays its
-// field's: a new field takes the next one, and a removed field's is never
-// given again.
+// Every field has a number too (FieldSpec.Num, its order's but mode's, which
+// shows first): a minion that reads a minion config reads it by that number
+// alone. A number stays its field's: a new field takes the next one, and a
+// removed field's is never given again.
 //
 // 2: headers became a string_map (name → value) instead of "Name: value" lines.
 // 3: fields by connection kind (reverse-call, reverse-persistent).
-const Version = 3
+// 4: mode: base_url and extra_base_urls only with url-based, the default;
+// factory-based, the factory decides the addresses and minions get neither.
+const Version = 4
+
+// The modes (the mode field): where a minion's addresses come from.
+const (
+	// ModeURLBased: the endpoint's base URL and additional base URLs.
+	ModeURLBased = "url-based"
+	// ModeFactoryBased: the factory decides them when it builds the minion.
+	ModeFactoryBased = "factory-based"
+)
 
 // baseURLPattern allows a scheme, a host and an optional port: the path is
 // the minion's choice.
@@ -65,20 +75,36 @@ func Schema() protocol.ConnectionSchema {
 	}
 }
 
+// urlBased is the condition of the fields only a url-based endpoint has: the
+// addresses, which a factory-based one leaves to the factory.
+func urlBased() *protocol.FieldCondition {
+	return &protocol.FieldCondition{Key: "mode", Values: []string{ModeURLBased}}
+}
+
 // addressFields are where the minion connects and how: every kind's.
 func addressFields() []protocol.FieldSpec {
 	return []protocol.FieldSpec{
 		{
+			// Shown first (order 0), before the addresses it decides on.
+			Key: "mode", Num: 14, Type: protocol.FieldEnum, Label: "Mode",
+			Description: "Where the minion's addresses come from. URL-based: the base URL and the additional base URLs set here. Factory-based: the factory decides them when it builds the minion.",
+			Group:       "Address", Order: 0, Default: ModeURLBased,
+			Options: []protocol.EnumOption{
+				{Value: ModeURLBased, Label: "URL-based", Description: "The base URL and the additional base URLs set here."},
+				{Value: ModeFactoryBased, Label: "Factory-based", Description: "The factory decides the addresses when it builds the minion."},
+			},
+		},
+		{
 			Key: "base_url", Num: 1, Type: protocol.FieldURL, Label: "Base URL", Required: true,
 			Description: "Where the minion connects: http(s)://host, with a port when it is not the scheme's default. No path: the channel accepts any path and the minion picks its own.",
 			Group:       "Address", Order: 1, Placeholder: "https://edge.example.com",
-			Pattern: baseURLPattern, MaxLength: 2048,
+			Pattern: baseURLPattern, MaxLength: 2048, When: urlBased(),
 		},
 		{
 			Key: "extra_base_urls", Num: 2, Type: protocol.FieldStringList, Label: "Additional base URLs",
 			Description: "More addresses of this channel, written like the base URL (e.g. other fronts in front of it). A minion falls back to them, in order, when the base URL cannot be reached; the other settings apply to each.",
 			Group:       "Address", Order: 2, Placeholder: "https://edge-2.example.com",
-			Pattern: baseURLPattern, MaxLength: 2048, MaxItems: maxExtraBaseURLs,
+			Pattern: baseURLPattern, MaxLength: 2048, MaxItems: maxExtraBaseURLs, When: urlBased(),
 		},
 		{
 			Key: "host_header", Num: 3, Type: protocol.FieldString, Label: "Host header",

@@ -52,8 +52,9 @@ Example: build id `5b0c4f6e-8a1d-4c2b-9e7f-3d2a1b0c9e8f`, ciphertext
 - **Any method, any path, any query string**, on the client port, including
   `/healthz`: every request is one minion message. The method, path and
   headers are the minion's choice (its connection settings give it the
-  `base_url`, and optionally `host_header`, `sni`, `user_agent` and extra
-  `headers`; see [Minion connection schema](#minion-connection-schema)). The
+  `base_url`, unless its factory decides the addresses, and optionally
+  `host_header`, `sni`, `user_agent` and extra `headers`; see [Minion
+  connection schema](#minion-connection-schema)). The
   channel reads only the body.
 - The channel unpacks the message and relays it to core's sync endpoint: the
   ciphertext as the raw request body, the id as `Logos-Build-Id`, and the
@@ -223,17 +224,26 @@ when `true`: a latency is set).
 ## Minion connection schema
 
 At registration the channel also declares what minions are given to reach it
-(`internal/connection`, version 3), for each of its two connection kinds:
+(`internal/connection`, version 4), for each of its two connection kinds:
 `reverse-call` (plain requests) and `reverse-persistent` (a WebSocket). Both
 kinds have every field below but `ws_reconnect_backoff`, the WebSocket's
 alone; the timing fields read per kind (a check-in over a WebSocket is a
 frame, not a request). Every instance declares the same schema. See the
 [contract](https://logoscore.github.io/logos-docs/contracts/minion-connection/).
 
+`mode` says where a minion's addresses come from. `url-based`, the default:
+the endpoint's `base_url` and `extra_base_urls`. `factory-based`: the factory
+decides them when it builds the minion, so an endpoint has neither. The two
+apply only with `url-based` (their
+[`when`](https://logoscore.github.io/logos-docs/contracts/minion-connection/#fields-that-depend-on-another)):
+core's forms show them only then, core refuses them otherwise, and a
+factory-based connection gives a minion neither.
+
 | Key | Num | Type | Default | Notes |
 | --- | --- | --- | --- | --- |
-| `base_url` | 1 | url | required | `http(s)://host[:port]`, **no path**: the channel accepts any path, the minion picks its own. At most 2048 characters |
-| `extra_base_urls` | 2 | string list | | More addresses of the channel in the same form (other fronts), at most 16. A minion falls back to them, in order, when the base URL cannot be reached; the other fields apply to each |
+| `mode` | 14 | enum | `url-based` | `url-based` or `factory-based`: where the addresses come from (above). Shown first |
+| `base_url` | 1 | url | required | `url-based` only. `http(s)://host[:port]`, **no path**: the channel accepts any path, the minion picks its own. At most 2048 characters |
+| `extra_base_urls` | 2 | string list | | `url-based` only. More addresses of the channel in the same form (other fronts), at most 16. A minion falls back to them, in order, when the base URL cannot be reached; the other fields apply to each |
 | `host_header` | 3 | string | | The `Host` to send when it must differ from the base URL's host (a CDN, a reverse proxy). At most 255 characters |
 | `sni` | 4 | string | | The TLS server name, when it must differ. At most 255 characters |
 | `proxy` | 5 | url | | The minion's outbound proxy, e.g. `http://proxy.corp:3128` |

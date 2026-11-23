@@ -5,6 +5,17 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2) are not
 listed: their tags say which.
 
+## v3.14.0
+
+- **Mode: url-based or factory-based.** Each kind's settings start with
+  `mode`: `url-based`, the default, as before; or `factory-based`, where
+  the factory decides the minion's addresses when it builds it. `base_url`
+  and `extra_base_urls` apply only with `url-based` (their `when`): core's
+  forms show them only then, core refuses them otherwise, and a
+  factory-based connection gives a minion neither. The connection schema
+  is version 4: a factory builds through the channel once it lists 4. It
+  takes the protocol's `when` on connection fields (v0.67.0).
+
 ## v3.13.1
 
 - **A longer delay line.** With simulated latency, a WebSocket's delay line
