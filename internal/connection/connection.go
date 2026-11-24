@@ -60,7 +60,7 @@ func Schema() protocol.ConnectionSchema {
 			// Requests, one exchange each.
 			protocol.KindReverseCall: {Fields: append(addressFields(), requestFields(
 				"How long the minion waits for a reply. Keep it above the channel's wait for core (CORE_SYNC_TIMEOUT, 30s by default), or replies still on their way are dropped.",
-				"How often the minion checks in when it has nothing to send.")...)},
+				"How often the minion checks in when it has nothing to send.")...), Summary: summary()},
 			// A WebSocket the minion keeps open: core sends over it as it has
 			// something.
 			protocol.KindReversePersistent: {Fields: append(append(addressFields(), requestFields(
@@ -70,10 +70,15 @@ func Schema() protocol.ConnectionSchema {
 					Key: "ws_reconnect_backoff", Num: 13, Type: protocol.FieldDuration, Label: "Reconnect back-off",
 					Description: "Longest wait between attempts to open the WebSocket again after it closed; the wait starts at 1s and doubles up to this.",
 					Group:       "Timing", Order: 13, Default: "60s", Min: "1s", Max: "1h",
-				})},
+				}), Summary: summary()},
 		},
 	}
 }
+
+// summary is what tells one of the channel's connections from another, for
+// people (docs: minion-connection, the schema's summary): its mode, and its
+// base URL when it is url-based.
+func summary() []string { return []string{"mode", "base_url"} }
 
 // urlBased is the condition of the fields only a url-based endpoint has: the
 // addresses, which a factory-based one leaves to the factory.

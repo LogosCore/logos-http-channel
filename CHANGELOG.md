@@ -5,6 +5,15 @@ From v3.7.3 on, releases that only take new tags of `logos-golang-protocol`,
 v3.7.17 bar v3.7.15, v3.8.2 to v3.8.25 bar v3.8.5 and v3.8.7, v3.9.2, v3.10.2, v3.14.1) are not
 listed: their tags say which.
 
+## v3.15.0
+
+- **What tells its connections apart.** Each kind's schema names `mode`
+  and `base_url` as its `summary`: core's web app shows a connection by
+  its kind and those (`url-based · https://edge.example.com`, or
+  `factory-based` alone) wherever it lists one, `switch_connection`'s
+  choices among them. Display alone: the schema stays version 4, and
+  minions read nothing new. It takes the protocol's `summary` (v0.70.0).
+
 ## v3.14.0
 
 - **Mode: url-based or factory-based.** Each kind's settings start with

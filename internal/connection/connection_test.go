@@ -10,6 +10,12 @@ func TestSchemaIsValid(t *testing.T) {
 	if err := protocol.ValidateConnectionSchema(Schema()); err != nil {
 		t.Fatal(err)
 	}
+	// Each kind's connections told apart by their mode and base URL.
+	for kind, k := range Schema().Kinds {
+		if len(k.Summary) != 2 || k.Summary[0] != "mode" || k.Summary[1] != "base_url" {
+			t.Errorf("%s: summary %v", kind, k.Summary)
+		}
+	}
 }
 
 func TestSchemaValues(t *testing.T) {

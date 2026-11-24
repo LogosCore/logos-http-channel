@@ -239,6 +239,11 @@ apply only with `url-based` (their
 core's forms show them only then, core refuses them otherwise, and a
 factory-based connection gives a minion neither.
 
+Each kind's `summary` is `mode` and `base_url`: what core's web app shows
+beside a connection's kind wherever it lists one (a session's connections,
+`switch_connection`'s choices), as "url-based · https://edge.example.com",
+or "factory-based" alone.
+
 | Key | Num | Type | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `mode` | 14 | enum | `url-based` | `url-based` or `factory-based`: where the addresses come from (above). Shown first |
